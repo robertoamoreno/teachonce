@@ -101,7 +101,7 @@ get a second say.
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     56 tests
+crates/core         events, session store, timeline, config     57 tests
 crates/capture      screen, window, clipboard, audio (macOS)    41 tests
 crates/narration    whisper.cpp transcription                    8 tests
 crates/agent        OpenAI-compatible client + agent loop      44 + 11 tests
@@ -127,7 +127,7 @@ macOS will ask for Screen Recording on first capture, and for Automation the
 first time you record with a given browser in front.
 
 ```bash
-cargo test --workspace                              # 169 tests
+cargo test --workspace                              # 170 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```

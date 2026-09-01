@@ -236,9 +236,17 @@ pub fn list_sessions() -> Result<Vec<SessionSummary>> {
         if !dir.is_dir() {
             continue;
         }
-        let Some(meta) = read_json::<SessionMeta>(&dir.join("session.json")) else {
+        let Some(mut meta) = read_json::<SessionMeta>(&dir.join("session.json")) else {
             continue;
         };
+        // A recording analysed before titles were copied into session.json
+        // still has its name — in analysis.json. Read it from there, so the
+        // list never says "Untitled" for something that was named.
+        if meta.title.is_none() {
+            meta.title = read_json::<crate::analysis::Analysis>(&dir.join("analysis.json"))
+                .map(|analysis| analysis.title)
+                .filter(|title| !title.trim().is_empty());
+        }
         let frame_count = std::fs::read_dir(dir.join("frames"))
             .map(|d| d.filter_map(Result::ok).count())
             .unwrap_or(0);
@@ -406,5 +414,24 @@ mod tests {
 
         assert!(set_session_title(&dir.join("missing"), Some("x")).is_err());
         delete_session(&id).unwrap();
+    }
+
+    #[test]
+    fn a_recording_analysed_before_titles_were_stored_is_still_named_in_the_list() {
+        // Seen live: sessions analysed by an earlier build had a title in
+        // analysis.json and none in session.json, and listed as "Untitled".
+        let _data = TempData::new("backfill");
+        let store = SessionStore::create("0.1.0-test").unwrap();
+        let dir = store.dir().to_path_buf();
+        store.finalize().unwrap();
+
+        let analysis =
+            crate::analysis::Analysis { title: "Audit API Keys".into(), ..Default::default() };
+        write_json(&dir.join("analysis.json"), &analysis).unwrap();
+        assert_eq!(list_sessions().unwrap()[0].meta.title.as_deref(), Some("Audit API Keys"));
+
+        // Once session.json has a title of its own, that one wins.
+        set_session_title(&dir, Some("Renamed")).unwrap();
+        assert_eq!(list_sessions().unwrap()[0].meta.title.as_deref(), Some("Renamed"));
     }
 }

@@ -31,10 +31,19 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
   const [feedback, setFeedback] = useState("");
   const [editing, setEditing] = useState(false);
 
+  // The recording on screen right now. A slow analysis, transcription or plan
+  // can finish after the user has moved to another recording, and its result
+  // must land on the one it belongs to — or nowhere — not on whatever is open.
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
   const load = useCallback(
     async (id: string) => {
       try {
-        setDetail(await api.loadSession(id));
+        const loaded = await api.loadSession(id);
+        if (selectedRef.current === id) setDetail(loaded);
       } catch (err) {
         onError(String(err));
       }
@@ -81,7 +90,8 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
    * stays edited unless the model changed that value itself in the refinement —
    * the user's retargeting should not be undone by asking for an unrelated change.
    */
-  const adoptPlan = (next: SkillPlan, previous: SkillPlan | null) => {
+  const adoptPlan = (next: SkillPlan, previous: SkillPlan | null, forSession: string) => {
+    if (selectedRef.current !== forSession) return;
     const merged = next.values.map((value) => {
       const before = previous?.values.find((v) => v.id === value.id);
       const edited = values.find((v) => v.id === value.id);
@@ -263,7 +273,8 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        adoptPlan(await api.planSkill(detail.summary.id), null);
+                        const id = detail.summary.id;
+                        adoptPlan(await api.planSkill(id), null, id);
                       })
                     }
                   >
@@ -320,7 +331,8 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                         disabled={busy || !planFeedback.trim()}
                         onClick={() =>
                           run(async () => {
-                            adoptPlan(await api.planSkill(detail.summary.id, planFeedback), plan);
+                            const id = detail.summary.id;
+                            adoptPlan(await api.planSkill(id, planFeedback), plan, id);
                           })
                         }
                       >
