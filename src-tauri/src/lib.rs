@@ -67,6 +67,10 @@ pub fn run() {
             }
 
             let toggle = MenuItem::with_id(app, "toggle", "Start Recording", true, None::<&str>)?;
+            // Kept so `emit_status` can flip its label to "Stop Recording".
+            if let Ok(mut slot) = app.state::<AppState>().tray_toggle.lock() {
+                *slot = Some(toggle.clone());
+            }
             let show = MenuItem::with_id(app, "show", "Open Skill Recorder", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle, &show, &quit])?;
@@ -134,7 +138,17 @@ pub fn run() {
         .expect("error while running Skill Recorder");
 }
 
-/// Push a status change to the UI.
+/// Push a status change to the UI, and keep the tray item's label honest.
 pub fn emit_status(app: &tauri::AppHandle, status: &skillrec_recorder::RecorderStatus) {
     let _ = app.emit("recorder://status", status);
+
+    let state = app.state::<AppState>();
+    if let Ok(slot) = state.tray_toggle.lock()
+        && let Some(item) = slot.as_ref()
+    {
+        let label = if status.recording { "Stop Recording" } else { "Start Recording" };
+        if let Err(err) = item.set_text(label) {
+            tracing::debug!("could not relabel the tray item: {err}");
+        }
+    }
 }

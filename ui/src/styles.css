@@ -130,3 +130,38 @@ button.danger { color: #fca5a5; }
   white-space: pre-wrap; word-break: break-word;
 }
 details.panel summary { cursor: pointer; color: var(--muted); }
+
+/* A panel header with an action on the right */
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.panel-head h2 { margin: 0; }
+button.small { padding: 3px 10px; font-size: 12px; }
+
+/* Analysis editor */
+.edit-step { display: grid; gap: 6px; }
+.edit-step input, .edit-step textarea {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; font: inherit;
+}
+.edit-step textarea { min-height: 48px; resize: vertical; }
+.edit-step .tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* Filmstrip */
+.filmstrip { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 6px; align-items: stretch; }
+.frame {
+  flex: none; width: 168px; background: none; border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px; color: var(--muted); cursor: zoom-in; text-align: left;
+}
+.frame:hover { border-color: var(--muted); }
+.frame img, .frame-placeholder {
+  width: 100%; height: 90px; object-fit: cover; object-position: top;
+  border-radius: 5px; display: block; background: var(--bg);
+}
+.frame small { display: block; font-size: 11px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frame-more { flex: none; align-self: center; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.82);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  cursor: zoom-out;
+}
+.lightbox img { max-width: 92vw; max-height: 84vh; border-radius: 8px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); }
+.lightbox p { color: var(--muted); margin: 0; }

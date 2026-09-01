@@ -169,7 +169,8 @@ export interface DownloadProgress {
 
 export const api = {
   status: () => invoke<RecorderStatus>("recorder_status"),
-  start: (narrate: boolean) => invoke<string>("start_recording", { narrate }),
+  start: (narrate: boolean, device?: string) =>
+    invoke<string>("start_recording", { narrate, device: device ?? null }),
   stop: () => invoke<string>("stop_recording"),
   discard: () => invoke<string>("discard_recording"),
   setMicrophone: (on: boolean, device?: string) =>

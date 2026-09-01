@@ -11,7 +11,7 @@ use skillrec_capture::audio::MicrophoneDevice;
 use skillrec_capture::permissions::{self, PermissionReport};
 use skillrec_core::analysis::{Analysis, AnalysisStep};
 use skillrec_core::config::{Settings, WhisperModel};
-use skillrec_core::session::{SessionSummary, write_json};
+use skillrec_core::session::{set_session_title, write_json, SessionSummary};
 use skillrec_core::skill::{BuiltSkill, FixedValue, SkillPlan};
 use skillrec_recorder::{MicrophoneState, RecorderStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -36,10 +36,11 @@ pub async fn recorder_status(state: State<'_, AppState>) -> Reply<RecorderStatus
 pub async fn start_recording(
     app: AppHandle,
     narrate: bool,
+    device: Option<String>,
     state: State<'_, AppState>,
 ) -> Reply<String> {
     let capture = state.settings.lock().await.capture;
-    let id = state.recorder.start(capture, narrate).await.map_err(fail)?;
+    let id = state.recorder.start(capture, narrate, device).await.map_err(fail)?;
     crate::emit_status(&app, &state.recorder.status().await);
     Ok(id)
 }
@@ -64,12 +65,14 @@ pub async fn discard_recording(app: AppHandle, state: State<'_, AppState>) -> Re
 pub async fn toggle_recording(app: AppHandle) -> Reply<bool> {
     let state = app.state::<AppState>();
     if state.recorder.is_recording().await {
-        state.recorder.stop().await.map_err(fail)?;
+        let id = state.recorder.stop().await.map_err(fail)?;
         crate::emit_status(&app, &state.recorder.status().await);
+        // Same as the Stop button: the library jumps to what was just saved.
+        let _ = app.emit("recorder://saved", &id);
         Ok(false)
     } else {
         let capture = state.settings.lock().await.capture;
-        state.recorder.start(capture, false).await.map_err(fail)?;
+        state.recorder.start(capture, false, None).await.map_err(fail)?;
         crate::emit_status(&app, &state.recorder.status().await);
         Ok(true)
     }
@@ -261,6 +264,9 @@ pub fn edit_analysis(
         .ok_or("there is no analysis to edit yet")?;
     analysis.apply_edit(title, intent, steps);
     write_json(&dir.join("analysis.json"), &analysis).map_err(fail)?;
+    if let Err(err) = set_session_title(&dir, Some(&analysis.title)) {
+        tracing::warn!("could not update the recording's title: {err:#}");
+    }
     Ok(analysis)
 }
 

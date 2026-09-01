@@ -255,6 +255,19 @@ pub fn list_sessions() -> Result<Vec<SessionSummary>> {
     Ok(out)
 }
 
+/// Give a recording its human-facing title, or clear it with `None` or blank.
+///
+/// The library list reads `session.json` alone, so a title produced by analysis
+/// (or typed by the user) has to be copied here before it shows up anywhere but
+/// the detail view.
+pub fn set_session_title(dir: &Path, title: Option<&str>) -> Result<()> {
+    let path = dir.join("session.json");
+    let mut meta: SessionMeta = read_json(&path)
+        .with_context(|| format!("{} has no readable session.json", dir.display()))?;
+    meta.title = title.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    write_json(&path, &meta)
+}
+
 /// Permanently delete a recording and everything in it.
 pub fn delete_session(id: &str) -> Result<()> {
     let dir = paths::session_dir(id)?;
@@ -371,5 +384,27 @@ mod tests {
 
         delete_session(&id).unwrap();
         assert!(list_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_title_set_after_the_fact_reaches_the_library_list() {
+        // The describer names a recording only after it is closed, and the
+        // list is built from session.json alone — so the title must land there.
+        let _data = TempData::new("title");
+        let store = SessionStore::create("0.1.0-test").unwrap();
+        let dir = store.dir().to_path_buf();
+        let id = store.meta().id.clone();
+        store.finalize().unwrap();
+        assert!(list_sessions().unwrap()[0].meta.title.is_none());
+
+        set_session_title(&dir, Some("  Check Pricing  ")).unwrap();
+        assert_eq!(list_sessions().unwrap()[0].meta.title.as_deref(), Some("Check Pricing"));
+
+        // Blank is "no title", not an empty string the UI would render as nothing.
+        set_session_title(&dir, Some("   ")).unwrap();
+        assert!(list_sessions().unwrap()[0].meta.title.is_none());
+
+        assert!(set_session_title(&dir.join("missing"), Some("x")).is_err());
+        delete_session(&id).unwrap();
     }
 }

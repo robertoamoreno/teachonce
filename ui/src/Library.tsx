@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   api,
   events,
   formatSpan,
+  type Analysis,
+  type AnalysisStep,
   type FixedValue,
+  type FrameRecord,
   type SessionDetail,
   type SessionSummary,
   type SkillPlan,
@@ -22,9 +25,11 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [plan, setPlan] = useState<SkillPlan | null>(null);
   const [values, setValues] = useState<FixedValue[]>([]);
+  const [planFeedback, setPlanFeedback] = useState("");
   const [progress, setProgress] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(
     async (id: string) => {
@@ -45,7 +50,9 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
     // A different recording means the previous one's draft plan is irrelevant.
     setPlan(null);
     setValues([]);
+    setPlanFeedback("");
     setFeedback("");
+    setEditing(false);
     load(selected);
   }, [selected, load]);
 
@@ -69,6 +76,23 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
     }
   };
 
+  /**
+   * Take a proposed or refined plan on board. A value the user already edited
+   * stays edited unless the model changed that value itself in the refinement —
+   * the user's retargeting should not be undone by asking for an unrelated change.
+   */
+  const adoptPlan = (next: SkillPlan, previous: SkillPlan | null) => {
+    const merged = next.values.map((value) => {
+      const before = previous?.values.find((v) => v.id === value.id);
+      const edited = values.find((v) => v.id === value.id);
+      const untouchedByModel = before !== undefined && before.value === value.value;
+      return untouchedByModel && edited ? { ...value, value: edited.value } : value;
+    });
+    setPlan(next);
+    setValues(merged);
+    setPlanFeedback("");
+  };
+
   return (
     <section className="library">
       <aside className="sessions">
@@ -79,7 +103,7 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
             className={`session ${selected === session.id ? "active" : ""}`}
             onClick={() => onSelect(session.id)}
           >
-            <strong>{session.title ?? "Untitled recording"}</strong>
+            <strong>{session.title || "Untitled recording"}</strong>
             <small>
               {new Date(session.startedAt).toLocaleString()} ·{" "}
               {formatSpan((session.stoppedAt ?? session.startedAt) - session.startedAt)}
@@ -100,7 +124,9 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
         {detail && (
           <>
             <header className="detail-head">
-              <h1>{detail.analysis?.title ?? detail.summary.title ?? "Untitled recording"}</h1>
+              <h1>
+                {detail.analysis?.title || detail.summary.title || "Untitled recording"}
+              </h1>
               <button
                 className="ghost danger"
                 disabled={busy}
@@ -161,9 +187,30 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
               </div>
             )}
 
-            {detail.analysis && (
+            {detail.analysis && editing && (
+              <AnalysisEditor
+                analysis={detail.analysis}
+                busy={busy}
+                onCancel={() => setEditing(false)}
+                onSave={(patch) =>
+                  run(async () => {
+                    await api.editAnalysis(detail.summary.id, patch);
+                    setEditing(false);
+                    await load(detail.summary.id);
+                    onChanged();
+                  })
+                }
+              />
+            )}
+
+            {detail.analysis && !editing && (
               <div className="panel">
-                <h2>What you did</h2>
+                <div className="panel-head">
+                  <h2>What you did</h2>
+                  <button className="ghost small" disabled={busy} onClick={() => setEditing(true)}>
+                    Edit
+                  </button>
+                </div>
                 <p className="intent">{detail.analysis.intent}</p>
                 <p className="muted">
                   {detail.analysis.intentRationale} · confidence{" "}
@@ -198,6 +245,7 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                         await api.reviseAnalysis(detail.summary.id, feedback);
                         setFeedback("");
                         await load(detail.summary.id);
+                        onChanged();
                       })
                     }
                   >
@@ -215,9 +263,7 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        const proposed = await api.planSkill(detail.summary.id);
-                        setPlan(proposed);
-                        setValues(proposed.values);
+                        adoptPlan(await api.planSkill(detail.summary.id), null);
                       })
                     }
                   >
@@ -262,6 +308,25 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                         </li>
                       ))}
                     </ol>
+
+                    <div className="feedback">
+                      <textarea
+                        placeholder="Want the plan changed? Say how — 'make the repo a value', 'drop step 2', 'use gh instead of the browser'."
+                        value={planFeedback}
+                        onChange={(e) => setPlanFeedback(e.target.value)}
+                      />
+                      <button
+                        className="ghost"
+                        disabled={busy || !planFeedback.trim()}
+                        onClick={() =>
+                          run(async () => {
+                            adoptPlan(await api.planSkill(detail.summary.id, planFeedback), plan);
+                          })
+                        }
+                      >
+                        Refine the plan with this feedback
+                      </button>
+                    </div>
 
                     <div className="actions">
                       <button
@@ -321,6 +386,8 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
               </div>
             )}
 
+            <Filmstrip sessionId={detail.summary.id} frames={detail.frames} onError={onError} />
+
             <details className="panel">
               <summary>Deterministic reconstruction (no model involved)</summary>
               <pre className="description">{detail.description}</pre>
@@ -329,5 +396,220 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
         )}
       </div>
     </section>
+  );
+}
+
+/** Direct edits to the analysis: no model involved, saved as a new revision. */
+function AnalysisEditor({
+  analysis,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  analysis: Analysis;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (patch: { title: string; intent: string; steps: AnalysisStep[] }) => void;
+}) {
+  const [title, setTitle] = useState(analysis.title);
+  const [intent, setIntent] = useState(analysis.intent);
+  const [steps, setSteps] = useState<AnalysisStep[]>(analysis.steps.map((step) => ({ ...step })));
+
+  const update = (index: number, patch: Partial<AnalysisStep>) =>
+    setSteps(steps.map((step, i) => (i === index ? { ...step, ...patch } : step)));
+  const remove = (index: number) => setSteps(steps.filter((_, i) => i !== index));
+  const move = (index: number, delta: number) => {
+    const target = index + delta;
+    if (target < 0 || target >= steps.length) return;
+    const next = [...steps];
+    [next[index], next[target]] = [next[target], next[index]];
+    setSteps(next);
+  };
+  const add = () =>
+    setSteps([
+      ...steps,
+      { id: "", title: "", detail: "", apps: [], evidence: [], confidence: "medium" },
+    ]);
+
+  // Ids stay dense and in order, whatever was removed or moved.
+  const renumbered = () => steps.map((step, index) => ({ ...step, id: `s${index + 1}` }));
+  const complete = intent.trim() !== "" && steps.every((step) => step.title.trim() !== "");
+
+  return (
+    <div className="panel edit-form">
+      <h2>Edit what you did</h2>
+      <p className="muted">
+        Direct edits — the model is not involved. The skill builder works from what you save here.
+      </p>
+      <label className="row">
+        <span className="label">Title</span>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="2 to 5 words" />
+      </label>
+      <label className="row">
+        <span className="label">Intent</span>
+        <input
+          value={intent}
+          onChange={(e) => setIntent(e.target.value)}
+          placeholder="One sentence naming the goal"
+        />
+      </label>
+      <ol className="steps">
+        {steps.map((step, index) => (
+          <li key={index} className="edit-step">
+            <input
+              value={step.title}
+              placeholder="What you did, past tense: 'Copied the enterprise tier price'"
+              onChange={(e) => update(index, { title: e.target.value })}
+            />
+            <textarea
+              value={step.detail}
+              placeholder="Detail (optional)"
+              onChange={(e) => update(index, { detail: e.target.value })}
+            />
+            <div className="tools">
+              <button className="ghost small" disabled={index === 0} onClick={() => move(index, -1)}>
+                Move up
+              </button>
+              <button
+                className="ghost small"
+                disabled={index === steps.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                Move down
+              </button>
+              <button className="ghost small danger" onClick={() => remove(index)}>
+                Remove
+              </button>
+              <small className="muted">
+                {step.apps.join(", ")}
+                {step.startMs != null && ` · ${formatSpan(step.startMs)}`}
+              </small>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="actions">
+        <button className="ghost" onClick={add}>
+          Add a step
+        </button>
+        <button
+          disabled={busy || !complete}
+          onClick={() => onSave({ title, intent, steps: renumbered() })}
+        >
+          Save
+        </button>
+        <button className="ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** How many thumbnails to pull over IPC at a time. A long recording can hold 600. */
+const FRAME_BATCH = 24;
+
+/** The retained screen stills, loaded lazily and only once the strip is opened. */
+function Filmstrip({
+  sessionId,
+  frames,
+  onError,
+}: {
+  sessionId: string;
+  frames: FrameRecord[];
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(FRAME_BATCH);
+  const [images, setImages] = useState<Record<string, string>>({});
+  const [zoomed, setZoomed] = useState<FrameRecord | null>(null);
+  // Files already asked for, so a re-render never re-reads a frame from disk.
+  const requested = useRef(new Set<string>());
+
+  useEffect(() => {
+    setOpen(false);
+    setShown(FRAME_BATCH);
+    setImages({});
+    setZoomed(null);
+    requested.current = new Set();
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const wanted = frames.slice(0, shown);
+    (async () => {
+      for (const frame of wanted) {
+        if (cancelled) return;
+        if (requested.current.has(frame.file)) continue;
+        requested.current.add(frame.file);
+        try {
+          const url = await api.readFrame(sessionId, frame.file);
+          setImages((prev) => ({ ...prev, [frame.file]: url }));
+        } catch (err) {
+          requested.current.delete(frame.file);
+          if (!cancelled) onError(String(err));
+          return;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, shown, frames, sessionId, onError]);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomed(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed]);
+
+  if (frames.length === 0) return null;
+
+  return (
+    <details
+      className="panel"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>Screen frames ({frames.length}) — stills kept only when the screen changed</summary>
+      <div className="filmstrip">
+        {frames.slice(0, shown).map((frame) => (
+          <button
+            key={frame.file}
+            className="frame"
+            title={frame.file}
+            onClick={() => images[frame.file] && setZoomed(frame)}
+          >
+            {images[frame.file] ? (
+              <img src={images[frame.file]} alt={`Screen at ${formatSpan(frame.atMs)}`} />
+            ) : (
+              <div className="frame-placeholder" />
+            )}
+            <small>
+              {formatSpan(frame.atMs)} · {frame.reason}
+            </small>
+          </button>
+        ))}
+        {shown < frames.length && (
+          <button className="ghost frame-more" onClick={() => setShown(shown + FRAME_BATCH)}>
+            Load {Math.min(FRAME_BATCH, frames.length - shown)} more
+          </button>
+        )}
+      </div>
+
+      {zoomed && images[zoomed.file] && (
+        <div className="lightbox" role="dialog" onClick={() => setZoomed(null)}>
+          <img src={images[zoomed.file]} alt={`Screen at ${formatSpan(zoomed.atMs)}`} />
+          <p>
+            {formatSpan(zoomed.atMs)} · {zoomed.reason} · {zoomed.width}×{zoomed.height} · click or
+            press Escape to close
+          </p>
+        </div>
+      )}
+    </details>
   );
 }

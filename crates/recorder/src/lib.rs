@@ -21,7 +21,7 @@ use skillrec_capture::collector::{Collector, CollectorHost};
 use skillrec_capture::{ActiveWindowCollector, ClipboardCollector, ScreenCollector};
 use skillrec_core::config::CaptureConfig;
 use skillrec_core::describe::render_description;
-use skillrec_core::events::EventPayload;
+use skillrec_core::events::{EventInput, EventPayload};
 use skillrec_core::narration::NarrationTranscript;
 use skillrec_core::session::{read_events, read_json, write_json, SessionMeta, SessionStore};
 use skillrec_core::timeline::build_bundle;
@@ -106,7 +106,26 @@ impl Recorder {
     }
 
     /// Begin a recording.
-    pub async fn start(&self, config: CaptureConfig, narrate: bool) -> Result<String> {
+    ///
+    /// `device` names the microphone to narrate with when `narrate` is set;
+    /// `None` means the system default.
+    pub async fn start(
+        &self,
+        config: CaptureConfig,
+        narrate: bool,
+        device: Option<String>,
+    ) -> Result<String> {
+        self.start_with(build_collectors(&config), narrate, device).await
+    }
+
+    /// [`start`](Self::start) with an explicit collector set, so the lifecycle
+    /// can be exercised without a screen, a clipboard or a microphone.
+    async fn start_with(
+        &self,
+        collectors: Vec<Box<dyn Collector>>,
+        narrate: bool,
+        device: Option<String>,
+    ) -> Result<String> {
         let mut active = self.active.lock().await;
         anyhow::ensure!(active.is_none(), "a recording is already running");
 
@@ -116,7 +135,7 @@ impl Recorder {
         let started_at = store.meta().started_at;
 
         store
-            .append(skillrec_core::events::EventInput::new(
+            .append(EventInput::new(
                 "recorder",
                 EventPayload::SessionStart { platform: std::env::consts::OS.to_string() },
             ))
@@ -136,7 +155,7 @@ impl Recorder {
             }
         });
 
-        let host = CollectorHost::start(build_collectors(&config), tx, dir.clone(), started_at);
+        let host = CollectorHost::start(collectors, tx, dir.clone(), started_at);
         tracing::info!(%id, "recording started");
 
         let mut session = Active {
@@ -154,7 +173,10 @@ impl Recorder {
         if narrate {
             // A microphone failure must not abort the recording — the user gets
             // an error badge and a session without narration.
-            session.microphone_state = start_microphone(&mut session, None);
+            session.microphone_state = start_microphone(&mut session, device.as_deref());
+            if matches!(session.microphone_state, MicrophoneState::On { .. }) {
+                note_narration(&session, true).await;
+            }
         }
 
         *active = Some(session);
@@ -172,36 +194,34 @@ impl Recorder {
             }
             session.microphone_state = start_microphone(session, device.as_deref());
             if matches!(session.microphone_state, MicrophoneState::On { .. }) {
-                session.store.lock().await.mark_narrated().ok();
-                session
-                    .store
-                    .lock()
-                    .await
-                    .append(skillrec_core::events::EventInput::new(
-                        "recorder",
-                        EventPayload::NarrationState { on: true },
-                    ))
-                    .ok();
+                note_narration(session, true).await;
             }
         } else {
+            let was_on = session.microphone.is_some();
             stop_microphone(session).await;
+            if was_on {
+                note_narration(session, false).await;
+            }
         }
         Ok(session.microphone_state.clone())
     }
 
-    /// Stop and keep the recording. Returns the session id.
+    /// Stop and keep the recording. Returns the session id once the
+    /// reconstruction (`bundle.json`, `description.md`) is on disk.
     pub async fn stop(&self) -> Result<String> {
         let session = self.finish().await?;
         let id = session.id.clone();
         let dir = session.dir.clone();
 
-        // Post-processing is deterministic and fast, but it still runs off the
-        // caller's path so the UI returns the moment capture has drained.
-        tokio::task::spawn_blocking(move || {
-            if let Err(err) = process_session(&dir) {
-                tracing::warn!("post-processing failed: {err:#}");
-            }
-        });
+        // Post-processing is deterministic and takes milliseconds even for a
+        // long recording. It is awaited rather than fired off because the UI
+        // jumps to the recording the moment this returns, and would otherwise
+        // find no description there half the time.
+        match tokio::task::spawn_blocking(move || process_session(&dir)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => tracing::warn!("post-processing failed: {err:#}"),
+            Err(err) => tracing::warn!("post-processing did not run: {err}"),
+        }
 
         *self.last_session.lock().await = Some(id.clone());
         Ok(id)
@@ -216,32 +236,39 @@ impl Recorder {
         Ok(id)
     }
 
-    /// Shared teardown: stop producers, flush, finalize.
+    /// Shared teardown: stop producers, drain, flush, finalize.
     async fn finish(&self) -> Result<FinishedSession> {
         let mut active = self.active.lock().await;
         let mut session = active.take().context("no recording is running")?;
 
-        // Order matters. The microphone is flushed first so its stop boundary is
-        // as close as possible to the click, then the collectors are joined so
-        // the final frame and the frame manifest are on disk, and only then is
-        // the event channel closed.
+        // Order matters. The microphone is flushed first so its stop boundary
+        // is as close as possible to the click. Then the collectors are joined,
+        // which writes the frame manifest and drops the last event senders.
+        // Then the drain is awaited, so everything the collectors sent is on
+        // disk. Only then is the stop marker appended — last, where it belongs.
         stop_microphone(&mut session).await;
-        session.host.stop();
+
+        // Joining collector threads blocks — a browser mid-AppleScript can hold
+        // one for most of a second — so it runs on the blocking pool rather
+        // than stalling an async worker.
+        let host = session.host;
+        if let Err(err) = tokio::task::spawn_blocking(move || host.stop()).await {
+            tracing::warn!("joining the collectors failed: {err}");
+        }
+
+        // With every sender gone the drain ends by itself once its queue is
+        // empty. It is awaited, not aborted: aborting could discard whatever a
+        // collector sent in its final moments, such as the last screen frame.
+        if let Err(err) = session.drain.await {
+            tracing::warn!("the event drain failed: {err}");
+        }
 
         session
             .store
             .lock()
             .await
-            .append(skillrec_core::events::EventInput::new(
-                "recorder",
-                EventPayload::SessionStop {},
-            ))
+            .append(EventInput::new("recorder", EventPayload::SessionStop {}))
             .ok();
-
-        // Dropping the last sender ends the drain task, which has already
-        // received everything the collectors sent before they were joined.
-        session.drain.abort();
-        let _ = session.drain.await;
 
         if !session.audio_segments.is_empty() {
             write_json(
@@ -310,6 +337,19 @@ async fn stop_microphone(session: &mut Active) {
         session.audio_segments.push(segment);
     }
     session.microphone_state = MicrophoneState::Off;
+}
+
+/// Record a microphone state change where the rest of the app can see it: the
+/// `narrated` flag the library badge reads, and a `narration.state` event so
+/// the timeline knows which stretches were spoken over.
+async fn note_narration(session: &Active, on: bool) {
+    let mut store = session.store.lock().await;
+    if on {
+        store.mark_narrated().ok();
+    }
+    store
+        .append(EventInput::new("recorder", EventPayload::NarrationState { on }))
+        .ok();
 }
 
 /// Finalize any recording that was interrupted rather than stopped.
@@ -385,7 +425,83 @@ pub fn process_session(dir: &std::path::Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use skillrec_capture::collector::CollectorContext;
+
     use super::*;
+
+    /// `SKILLREC_DATA_DIR` is process-global, so tests that redirect it take
+    /// this lock — otherwise one test's sessions show up in another's folder.
+    static DATA_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TempData {
+        root: PathBuf,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempData {
+        fn new(name: &str) -> Self {
+            let guard = DATA_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let root =
+                std::env::temp_dir().join(format!("skillrec-rec-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            unsafe { std::env::set_var("SKILLREC_DATA_DIR", &root) };
+            Self { root, _guard: guard }
+        }
+
+        fn session_dir(&self, id: &str) -> PathBuf {
+            self.root.join("sessions").join(id)
+        }
+    }
+
+    impl Drop for TempData {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var("SKILLREC_DATA_DIR") };
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// Publishes a marker on every tick, and one more after being told to stop
+    /// — the way the screen sampler's final frame lands right at the boundary.
+    struct Chatter;
+
+    impl Collector for Chatter {
+        fn name(&self) -> &'static str {
+            "chatter"
+        }
+
+        fn run(&mut self, ctx: CollectorContext) {
+            let mut index = 0;
+            loop {
+                ctx.publish("chatter", EventPayload::Marker { note: format!("tick {index}") });
+                index += 1;
+                if !ctx.sleep_or_stop(Duration::from_millis(1)) {
+                    break;
+                }
+            }
+            ctx.publish("chatter", EventPayload::Marker { note: "last".into() });
+        }
+    }
+
+    fn sample_event() -> skillrec_core::events::RecEvent {
+        skillrec_core::events::RecEvent {
+            seq: 1,
+            t: 5_000,
+            epoch: 6_000,
+            source: "test".into(),
+            payload: EventPayload::AppActivate {
+                app: "Safari".into(),
+                title: "Pricing".into(),
+                url: None,
+                host: None,
+                bundle_id: None,
+                pid: None,
+                bounds: None,
+            },
+        }
+    }
 
     #[test]
     fn every_enabled_source_gets_a_collector() {
@@ -431,6 +547,60 @@ mod tests {
         assert!(recorder.set_microphone(true, None).await.is_err());
     }
 
+    #[tokio::test]
+    async fn every_event_sent_before_stop_is_on_disk_and_the_stop_marker_is_last() {
+        // Regression: an earlier version aborted the drain task on stop, which
+        // could drop whatever a collector had sent in its final moments and let
+        // the stop marker land before events that happened earlier.
+        let data = TempData::new("drain");
+        let recorder = Recorder::new("test");
+        let id = recorder.start_with(vec![Box::new(Chatter)], false, None).await.unwrap();
+        assert!(recorder.is_recording().await);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(recorder.stop().await.unwrap(), id);
+        assert!(!recorder.is_recording().await);
+
+        let dir = data.session_dir(&id);
+        let events = read_events(&dir.join("events.jsonl"));
+        assert_eq!(events.first().map(|e| e.kind()), Some("session.start"));
+        assert_eq!(events.last().map(|e| e.kind()), Some("session.stop"));
+
+        let markers: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::Marker { note } => Some(note.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(markers.len() > 2, "expected a stream of ticks, saw {}", markers.len());
+        assert_eq!(markers.last(), Some(&"last"), "the collector's final event was dropped");
+        for (index, note) in markers[..markers.len() - 1].iter().enumerate() {
+            assert_eq!(*note, format!("tick {index}"), "a tick went missing mid-stream");
+        }
+
+        // stop() returns only once the reconstruction is on disk, so the UI
+        // never opens a recording with no description.
+        assert!(dir.join("bundle.json").exists());
+        assert!(dir.join("description.md").exists());
+        let meta: SessionMeta = read_json(&dir.join("session.json")).unwrap();
+        assert!(meta.stopped_at.is_some());
+        assert_eq!(recorder.status().await.last_session_id.as_deref(), Some(id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn a_second_start_is_refused_and_discard_removes_the_folder() {
+        let data = TempData::new("discard");
+        let recorder = Recorder::new("test");
+        let id = recorder.start_with(Vec::new(), false, None).await.unwrap();
+        assert!(recorder.start_with(Vec::new(), false, None).await.is_err());
+        assert!(data.session_dir(&id).exists());
+
+        assert_eq!(recorder.discard().await.unwrap(), id);
+        assert!(!recorder.is_recording().await);
+        assert!(!data.session_dir(&id).exists());
+        assert!(recorder.status().await.last_session_id.is_none(), "a discard is not a save");
+    }
+
     #[test]
     fn post_processing_writes_both_artifacts_from_events_alone() {
         let dir = std::env::temp_dir().join(format!("skillrec-proc-{}", std::process::id()));
@@ -447,24 +617,9 @@ mod tests {
             title: None,
         };
         write_json(&dir.join("session.json"), &meta).unwrap();
-        let event = skillrec_core::events::RecEvent {
-            seq: 1,
-            t: 0,
-            epoch: 1_000,
-            source: "test".into(),
-            payload: EventPayload::AppActivate {
-                app: "Safari".into(),
-                title: "Pricing".into(),
-                url: None,
-                host: None,
-                bundle_id: None,
-                pid: None,
-                bounds: None,
-            },
-        };
         std::fs::write(
             dir.join("events.jsonl"),
-            format!("{}\n", serde_json::to_string(&event).unwrap()),
+            format!("{}\n", serde_json::to_string(&sample_event()).unwrap()),
         )
         .unwrap();
 
@@ -480,10 +635,8 @@ mod tests {
         // Observed for real: a dev hot-reload killed the app mid-recording and
         // left a session with no stoppedAt and no reconstruction, which the
         // library then listed as a permanently blank entry.
-        let root = std::env::temp_dir().join(format!("skillrec-recover-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        unsafe { std::env::set_var("SKILLREC_DATA_DIR", &root) };
-        let dir = root.join("sessions").join("interrupted");
+        let data = TempData::new("recover");
+        let dir = data.session_dir("interrupted");
         std::fs::create_dir_all(&dir).unwrap();
 
         let meta = SessionMeta {
@@ -496,24 +649,9 @@ mod tests {
             title: None,
         };
         write_json(&dir.join("session.json"), &meta).unwrap();
-        let event = skillrec_core::events::RecEvent {
-            seq: 1,
-            t: 5_000,
-            epoch: 6_000,
-            source: "test".into(),
-            payload: EventPayload::AppActivate {
-                app: "Safari".into(),
-                title: "Pricing".into(),
-                url: None,
-                host: None,
-                bundle_id: None,
-                pid: None,
-                bounds: None,
-            },
-        };
         std::fs::write(
             dir.join("events.jsonl"),
-            format!("{}\n", serde_json::to_string(&event).unwrap()),
+            format!("{}\n", serde_json::to_string(&sample_event()).unwrap()),
         )
         .unwrap();
 
@@ -527,9 +665,6 @@ mod tests {
 
         // Idempotent: a second startup must not touch an already-closed session.
         assert_eq!(recover_interrupted_sessions().unwrap(), 0);
-
-        unsafe { std::env::remove_var("SKILLREC_DATA_DIR") };
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

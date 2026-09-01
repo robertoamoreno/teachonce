@@ -17,6 +17,8 @@ pub struct AppState {
     /// Held in memory rather than on disk because it is a *draft*: it only
     /// becomes an artifact when the user approves it and the skill is built.
     pub plans: Mutex<std::collections::HashMap<String, SkillPlan>>,
+    /// The tray's Start/Stop item, so its label can follow the recorder.
+    pub tray_toggle: std::sync::Mutex<Option<tauri::menu::MenuItem<tauri::Wry>>>,
 }
 
 impl AppState {
@@ -31,6 +33,7 @@ impl AppState {
             recorder: Arc::new(Recorder::new(app_version)),
             settings: Mutex::new(settings),
             plans: Mutex::new(std::collections::HashMap::new()),
+            tray_toggle: std::sync::Mutex::new(None),
         }
     }
 }

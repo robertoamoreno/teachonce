@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use skillrec_core::analysis::{Analysis, AnalysisSubmission};
 use skillrec_core::config::LlmConfig;
-use skillrec_core::session::write_json;
+use skillrec_core::session::{set_session_title, write_json};
 
 use crate::agent::{arg_i64, arg_str, parse_arguments, schema, Agent, AgentProgress, Tool, ToolOutput};
 use crate::client::{ContentPart, LlmClient, ToolDef};
@@ -339,7 +339,8 @@ impl Describer {
         ];
         // Offering frame tools to a text-only model wastes turns on calls the
         // server will reject, so they are simply absent unless vision is on.
-        if vision && !data.frames.frames.is_empty() {
+        let frames_available = vision && !data.frames.frames.is_empty();
+        if frames_available {
             tools.push(Box::new(ListFrames(Arc::clone(&data))));
             tools.push(Box::new(GetFrames(Arc::clone(&data))));
         }
@@ -359,26 +360,7 @@ impl Describer {
             },
         });
 
-        let prompt = match (feedback, previous.as_ref()) {
-            (Some(feedback), Some(previous)) => format!(
-                "The user reviewed your analysis and gave this feedback:\n\n{feedback}\n\n\
-                 Your previous analysis was:\n\n{}\n\n\
-                 Treat the feedback as authoritative. Re-examine the relevant signals, then call \
-                 submit_analysis with a fully revised analysis. Keep step ids stable where a step \
-                 is unchanged.",
-                previous.render()
-            ),
-            (Some(feedback), None) => format!(
-                "Reconstruct what the user did in this recording. Keep this in mind: {feedback}\n\n\
-                 Start with get_timeline, then submit_analysis."
-            ),
-            _ => "Reconstruct what the user did in this recording. Start with get_timeline, read \
-                  the narration if there is any, then read events where anything is unclear. Look \
-                  at frames only where the events are ambiguous. When confident, call \
-                  submit_analysis."
-                .to_string(),
-        };
-
+        let prompt = kickoff_prompt(feedback, previous.as_ref(), frames_available);
         agent.run_turn(prompt, on_progress).await?;
 
         let submission = captured
@@ -395,6 +377,11 @@ impl Describer {
 
         write_json(&dir.join("analysis.json"), &analysis)
             .context("saving analysis.json")?;
+        // The library list is built from session.json alone, so the title has
+        // to be copied there — otherwise every recording stays "Untitled".
+        if let Err(err) = set_session_title(&dir, Some(&analysis.title)) {
+            tracing::warn!("could not record the recording's title: {err:#}");
+        }
         on_progress(AgentProgress {
             session_id,
             phase: "done".into(),
@@ -402,6 +389,45 @@ impl Describer {
         });
         Ok(analysis)
     }
+}
+
+/// The user turn that opens an analysis.
+///
+/// The brief documents the frame tools, so when they are absent — a text-only
+/// model, or a recording with no stills — the prompt says so outright. Without
+/// that, a model faithfully following "look at frames where ambiguous" spends
+/// turns calling tools that do not exist.
+fn kickoff_prompt(
+    feedback: Option<&str>,
+    previous: Option<&Analysis>,
+    frames_available: bool,
+) -> String {
+    let mut prompt = match (feedback, previous) {
+        (Some(feedback), Some(previous)) => format!(
+            "The user reviewed your analysis and gave this feedback:\n\n{feedback}\n\n\
+             Your previous analysis was:\n\n{}\n\n\
+             Treat the feedback as authoritative. Re-examine the relevant signals, then call \
+             submit_analysis with a fully revised analysis. Keep step ids stable where a step \
+             is unchanged.",
+            previous.render()
+        ),
+        (Some(feedback), None) => format!(
+            "Reconstruct what the user did in this recording. Keep this in mind: {feedback}\n\n\
+             Start with get_timeline, then submit_analysis."
+        ),
+        _ => "Reconstruct what the user did in this recording. Start with get_timeline, read \
+              the narration if there is any, then read events where anything is unclear. Look \
+              at frames only where the events are ambiguous. When confident, call \
+              submit_analysis."
+            .to_string(),
+    };
+    if !frames_available {
+        prompt.push_str(
+            "\n\nNo screen frames are available for this recording: list_frames and get_frames \
+             are not offered, so work from the timeline, narration and events alone.",
+        );
+    }
+    prompt
 }
 
 #[cfg(test)]
@@ -532,6 +558,19 @@ mod tests {
         let submission = captured.lock().unwrap().take().unwrap();
         assert_eq!(submission.title, "Check Pricing");
         assert_eq!(submission.steps.len(), 1);
+    }
+
+    #[test]
+    fn the_kickoff_prompt_says_when_frames_are_not_on_offer() {
+        let with = kickoff_prompt(None, None, true);
+        let without = kickoff_prompt(None, None, false);
+        assert!(!with.contains("No screen frames"));
+        assert!(without.contains("No screen frames"), "{without}");
+        assert!(without.contains("get_timeline"));
+
+        let revision = kickoff_prompt(Some("step 2 is wrong"), Some(&Analysis::default()), false);
+        assert!(revision.contains("step 2 is wrong"));
+        assert!(revision.contains("No screen frames"));
     }
 
     #[test]

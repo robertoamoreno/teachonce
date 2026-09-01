@@ -64,7 +64,9 @@ export function Recorder({ status, onError }: Props) {
         <button
           className={`record ${recording ? "on" : ""}`}
           disabled={busy}
-          onClick={() => run(() => (recording ? api.stop() : api.start(narrate)))}
+          onClick={() =>
+            run(() => (recording ? api.stop() : api.start(narrate, device || undefined)))
+          }
         >
           <span className="glyph" />
           {recording ? "Stop" : "Record"}

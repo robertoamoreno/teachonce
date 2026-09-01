@@ -74,7 +74,8 @@ their own threads at intervals chosen from what each signal costs:
 **No video is recorded.** Screen stills are hashed with a difference hash and kept
 only when the screen actually changed, or every 5 s as a heartbeat. A ten-minute
 recording is typically a few dozen JPEGs — no encoder, no container, no ffmpeg,
-and nothing to decode later.
+and nothing to decode later. Every retained still is visible in the library, so
+you can see exactly what a model could be shown before you analyse.
 
 **2. Reconstruct** — on stop, the event stream is segmented into ordered steps
 (a new step when you change app, or change host inside a browser) and written as
@@ -93,17 +94,18 @@ it, edit it directly, or send natural-language feedback for another pass.
 **5. Build** — two phases with you in between. The model proposes a plan: how it
 generalizes your single run, the fixed values it hard-codes (as `{{token}}`
 fields you can edit), and the ordered steps, each tagged `calculation` or
-`action`. You approve, and it writes the `SKILL.md`. Your edited values win — the
-model does not get a second say.
+`action`. You approve — or ask for changes in plain language and get a revised
+plan — and it writes the `SKILL.md`. Your edited values win — the model does not
+get a second say.
 
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     53 tests
+crates/core         events, session store, timeline, config     56 tests
 crates/capture      screen, window, clipboard, audio (macOS)    41 tests
 crates/narration    whisper.cpp transcription                    8 tests
-crates/agent        OpenAI-compatible client + agent loop      42 + 11 tests
-crates/recorder     the lifecycle state machine                  6 tests
+crates/agent        OpenAI-compatible client + agent loop      44 + 11 tests
+crates/recorder     the lifecycle state machine                  9 tests
 src-tauri           commands, tray, hotkey
 ui                  React 19
 ```
@@ -125,7 +127,7 @@ macOS will ask for Screen Recording on first capture, and for Automation the
 first time you record with a given browser in front.
 
 ```bash
-cargo test --workspace                              # 161 tests
+cargo test --workspace                              # 169 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```
