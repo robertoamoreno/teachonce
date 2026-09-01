@@ -1,0 +1,17 @@
+[package]
+name = "skillrec-recorder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+skillrec-core = { path = "../core" }
+skillrec-capture = { path = "../capture" }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

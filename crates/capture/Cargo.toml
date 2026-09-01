@@ -1,0 +1,22 @@
+[package]
+name = "skillrec-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arboard = "3.6.1"
+cpal = "0.18.1"
+hound = "3.5.1"
+image = "0.25.10"
+serde.workspace = true
+skillrec-core = { version = "0.1.0", path = "../core" }
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+xcap = "0.9.8"
+
+[dev-dependencies]
+skillrec-core = { path = "../core" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+tracing-subscriber.workspace = true

@@ -1,0 +1,14 @@
+# Rust build output
+/target
+
+# Node
+/node_modules
+
+# Built frontend; `npm run tauri build` regenerates it
+/ui/dist
+
+# Tauri-generated schemas
+/src-tauri/gen/schemas
+
+# macOS
+.DS_Store

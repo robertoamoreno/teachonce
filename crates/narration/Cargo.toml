@@ -1,0 +1,18 @@
+[package]
+name = "skillrec-narration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hound = "3.5.1"
+# Only used to fetch the Whisper weights, once, when the user opts in.
+reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "rustls", "webpki-roots", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+skillrec-core = { version = "0.1.0", path = "../core" }
+tokio.workspace = true
+tracing.workspace = true
+whisper-rs = { version = "0.16.0", features = ["metal"] }

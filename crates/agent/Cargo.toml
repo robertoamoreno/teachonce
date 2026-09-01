@@ -1,0 +1,23 @@
+[package]
+name = "skillrec-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait = "0.1.91"
+base64 = "0.23.1"
+# rustls rather than the system TLS stack: one less native dependency, and the
+# same behaviour whether the endpoint is https://api.openai.com or localhost.
+reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "rustls", "webpki-roots"] }
+serde.workspace = true
+serde_json.workspace = true
+skillrec-core = { version = "0.1.0", path = "../core" }
+tokio.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber.workspace = true
