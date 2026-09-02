@@ -145,7 +145,11 @@ export interface SessionDetail {
   skill: BuiltSkill | null;
   frames: FrameRecord[];
   needsTranscription: boolean;
+  transcribeVia: TranscriptionBackend;
+  transcribeHost: string;
 }
+
+export type TranscriptionBackend = "local" | "hosted";
 
 export interface Settings {
   capture: {
@@ -168,6 +172,13 @@ export interface Settings {
   narration: {
     model: "tiny" | "base" | "small" | "medium" | "large-v3-turbo";
     language: string;
+    backend: TranscriptionBackend;
+    hosted: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+      requestTimeoutSecs: number;
+    };
   };
 }
 

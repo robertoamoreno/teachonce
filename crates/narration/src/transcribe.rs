@@ -70,8 +70,9 @@ pub fn read_wav(path: &Path) -> Result<Vec<f32>> {
 
 /// Above this, Whisper itself believes the span is not speech. Set loosely: a
 /// quiet but real aside should survive, and the boilerplate filter is the second
-/// line of defence.
-const NO_SPEECH_THRESHOLD: f32 = 0.9;
+/// line of defence. Shared with the hosted path, which gets the same figure
+/// back from the API.
+pub(crate) const NO_SPEECH_THRESHOLD: f32 = 0.9;
 
 /// A loaded Whisper model, reusable across segments.
 pub struct Transcriber {

@@ -8,8 +8,9 @@ license.workspace = true
 anyhow.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hound = "3.5.1"
-# Only used to fetch the Whisper weights, once, when the user opts in.
-reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "rustls", "webpki-roots", "stream"] }
+# Fetches the Whisper weights once, and — only when the user chooses a hosted
+# endpoint in Settings — uploads narration audio for transcription.
+reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "rustls", "webpki-roots", "stream", "multipart"] }
 serde.workspace = true
 serde_json.workspace = true
 skillrec-core = { version = "0.1.0", path = "../core" }

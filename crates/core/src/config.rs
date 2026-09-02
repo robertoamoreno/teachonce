@@ -170,18 +170,88 @@ impl WhisperModel {
     }
 }
 
+/// Where narration is turned into text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptionBackend {
+    /// whisper.cpp on this machine. The default, and the only option under
+    /// which narration audio never leaves the computer.
+    #[default]
+    Local,
+    /// An OpenAI-compatible `/audio/transcriptions` endpoint the user chose.
+    Hosted,
+}
+
+/// A hosted speech-to-text endpoint speaking the OpenAI transcription API:
+/// api.openai.com, Groq, or a self-hosted server with the same contract.
+///
+/// This is the second and last place data can leave the machine, and unlike
+/// analysis it carries audio. It does nothing until the user picks it in
+/// Settings and presses Transcribe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HostedTranscription {
+    /// Base URL **including** the `/v1` suffix.
+    pub base_url: String,
+    /// Sent as `Authorization: Bearer …` when non-empty. A self-hosted server
+    /// may need none.
+    pub api_key: String,
+    /// Model id as the server names it: `whisper-1` on OpenAI,
+    /// `whisper-large-v3-turbo` on Groq.
+    pub model: String,
+    /// Per-upload timeout in seconds. Uploads are a few megabytes each.
+    pub request_timeout_secs: u64,
+}
+
+impl Default for HostedTranscription {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: String::new(),
+            model: "whisper-1".into(),
+            request_timeout_secs: 300,
+        }
+    }
+}
+
+impl HostedTranscription {
+    /// Full URL of the transcriptions endpoint.
+    pub fn transcriptions_url(&self) -> String {
+        format!("{}/audio/transcriptions", self.base_url.trim_end_matches('/'))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(!self.model.trim().is_empty(), "no transcription model is configured");
+        let url = self.base_url.trim();
+        anyhow::ensure!(!url.is_empty(), "no transcription base URL is configured");
+        anyhow::ensure!(
+            url.starts_with("http://") || url.starts_with("https://"),
+            "the transcription base URL must start with http:// or https://"
+        );
+        Ok(())
+    }
+}
+
 /// Narration settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NarrationConfig {
     pub model: WhisperModel,
-    /// ISO-639-1 code, or `auto` to let Whisper detect it.
+    /// ISO-639-1 code, or `auto` to let Whisper detect it. Applies to both
+    /// backends.
     pub language: String,
+    pub backend: TranscriptionBackend,
+    pub hosted: HostedTranscription,
 }
 
 impl Default for NarrationConfig {
     fn default() -> Self {
-        Self { model: WhisperModel::default(), language: "auto".into() }
+        Self {
+            model: WhisperModel::default(),
+            language: "auto".into(),
+            backend: TranscriptionBackend::default(),
+            hosted: HostedTranscription::default(),
+        }
     }
 }
 
@@ -262,6 +332,26 @@ mod tests {
         assert!(s.capture.clipboard);
         // A settings file from before the field existed sends nothing.
         assert_eq!(s.llm.reasoning_effort_to_send(), None);
+    }
+
+    #[test]
+    fn narration_defaults_to_local_and_old_settings_files_still_load() {
+        // A settings.json from before hosted transcription existed.
+        let s: Settings =
+            serde_json::from_str(r#"{"narration":{"model":"tiny","language":"en"}}"#).unwrap();
+        assert_eq!(s.narration.backend, TranscriptionBackend::Local);
+        assert_eq!(s.narration.model, WhisperModel::Tiny);
+        assert_eq!(s.narration.hosted.model, "whisper-1");
+        assert_eq!(
+            s.narration.hosted.transcriptions_url(),
+            "https://api.openai.com/v1/audio/transcriptions"
+        );
+
+        let hosted = HostedTranscription { base_url: "https://api.groq.com/openai/v1/".into(), ..Default::default() };
+        assert_eq!(hosted.transcriptions_url(), "https://api.groq.com/openai/v1/audio/transcriptions");
+        assert!(hosted.validate().is_ok(), "a key is optional: self-hosted servers need none");
+        assert!(HostedTranscription { base_url: "api.openai.com".into(), ..Default::default() }.validate().is_err());
+        assert!(HostedTranscription { model: " ".into(), ..Default::default() }.validate().is_err());
     }
 
     #[test]

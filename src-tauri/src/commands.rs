@@ -10,7 +10,7 @@ use skillrec_agent::{Debriefer, Describer, SessionData, SkillBuilder, SkillTarge
 use skillrec_capture::audio::MicrophoneDevice;
 use skillrec_capture::permissions::{self, PermissionReport};
 use skillrec_core::analysis::{Analysis, AnalysisStep, DebriefAnswer};
-use skillrec_core::config::{Settings, WhisperModel};
+use skillrec_core::config::{Settings, TranscriptionBackend, WhisperModel};
 use skillrec_core::session::{set_session_title, write_json, SessionSummary};
 use skillrec_core::skill::{BuiltSkill, FixedValue, SkillPlan};
 use skillrec_recorder::{MicrophoneState, RecorderStatus};
@@ -126,10 +126,15 @@ pub struct SessionDetail {
     pub skill: Option<BuiltSkill>,
     pub frames: Vec<skillrec_core::frames::FrameRecord>,
     pub needs_transcription: bool,
+    /// Where Transcribe would send the audio, so the button can say so before
+    /// anything leaves the machine.
+    pub transcribe_via: TranscriptionBackend,
+    /// Host of the hosted endpoint, for the same button.
+    pub transcribe_host: String,
 }
 
 #[tauri::command]
-pub fn load_session(id: String) -> Reply<SessionDetail> {
+pub async fn load_session(id: String, state: State<'_, AppState>) -> Reply<SessionDetail> {
     let dir = skillrec_core::paths::session_dir(&id).map_err(fail)?;
     let data = SessionData::load(&dir).map_err(fail)?;
     let summary = skillrec_core::session::list_sessions()
@@ -137,6 +142,7 @@ pub fn load_session(id: String) -> Reply<SessionDetail> {
         .into_iter()
         .find(|s| s.meta.id == id)
         .ok_or_else(|| format!("no recording called {id}"))?;
+    let narration = state.settings.lock().await.narration.clone();
 
     Ok(SessionDetail {
         description: std::fs::read_to_string(dir.join("description.md")).unwrap_or_default(),
@@ -146,6 +152,9 @@ pub fn load_session(id: String) -> Reply<SessionDetail> {
         skill: skillrec_core::session::read_json(&dir.join("skill.json")),
         frames: data.frames.frames.clone(),
         needs_transcription: skillrec_narration::transcribe::needs_transcription(&dir),
+        transcribe_via: narration.backend,
+        transcribe_host: skillrec_core::timeline::host_of(&narration.hosted.base_url)
+            .unwrap_or_default(),
         summary,
     })
 }
@@ -448,22 +457,49 @@ pub async fn transcribe_session(
     let dir = skillrec_core::paths::session_dir(&id).map_err(fail)?;
     let config = state.settings.lock().await.narration.clone();
 
-    let sink = {
-        let app = app.clone();
-        move |progress: skillrec_narration::DownloadProgress| {
-            let _ = app.emit("whisper://download", &progress);
+    let transcript = match config.backend {
+        TranscriptionBackend::Local => {
+            let sink = {
+                let app = app.clone();
+                move |progress: skillrec_narration::DownloadProgress| {
+                    let _ = app.emit("whisper://download", &progress);
+                }
+            };
+            let weights =
+                skillrec_narration::ensure_model(config.model, &sink).await.map_err(fail)?;
+
+            // Whisper is a long CPU/GPU-bound call. Running it on a blocking
+            // thread keeps the UI and the async runtime responsive throughout.
+            tokio::task::spawn_blocking(move || {
+                skillrec_narration::transcribe_session(&dir, &config, &weights)
+            })
+            .await
+            .map_err(fail)?
+            .map_err(fail)?
+        }
+        TranscriptionBackend::Hosted => {
+            // The only path on which audio leaves the machine, and the user
+            // chose it in Settings. Progress rides the same channel the agents
+            // use, so the library's progress line shows the uploads.
+            let sink = {
+                let app = app.clone();
+                let session_id = id.clone();
+                move |message: String| {
+                    let _ = app.emit(
+                        "agent://progress",
+                        &skillrec_agent::AgentProgress {
+                            session_id: session_id.clone(),
+                            phase: "transcribe".into(),
+                            message,
+                        },
+                    );
+                }
+            };
+            skillrec_narration::transcribe_session_hosted(&dir, &config, &sink)
+                .await
+                .map_err(fail)?
         }
     };
-    let weights = skillrec_narration::ensure_model(config.model, &sink).await.map_err(fail)?;
-
-    // Whisper is a long CPU/GPU-bound call. Running it on a blocking thread
-    // keeps the UI and the async runtime responsive throughout.
-    let transcript = tokio::task::spawn_blocking(move || {
-        skillrec_narration::transcribe_session(&dir, &config, &weights)
-    })
-    .await
-    .map_err(fail)?
-    .map_err(fail)?;
 
     let _ = app.emit("narration://done", &id);
     Ok(transcript)

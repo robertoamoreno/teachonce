@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, events, type AppInfo, type ConnectionTest, type Settings } from "./api";
 
+/** Hosted transcription services speaking the OpenAI audio API. */
+const TRANSCRIPTION_PRESETS = [
+  { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "whisper-1", key: "openai" },
+  { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "whisper-large-v3-turbo", key: "groq" },
+];
+
 /** Endpoints people actually run, so the common cases are one click away. */
 const PRESETS = [
   { label: "Ollama", baseUrl: "http://localhost:11434/v1", model: "qwen3:8b", key: "ollama" },
@@ -161,29 +167,26 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
       </div>
 
       <div className="panel">
-        <h2>Narration model</h2>
+        <h2>Narration</h2>
         <p className="muted">
-          Speech-to-text runs entirely on this machine through whisper.cpp. The weights are
-          downloaded once.
+          Speech-to-text runs on this machine through whisper.cpp unless you choose a hosted
+          service. The language applies to both.
         </p>
         <label className="row">
-          <span className="label">Model</span>
+          <span className="label">Transcribe with</span>
           <select
-            value={settings.narration.model}
+            value={settings.narration.backend}
             onChange={(e) =>
               patch({
                 narration: {
                   ...settings.narration,
-                  model: e.target.value as Settings["narration"]["model"],
+                  backend: e.target.value as Settings["narration"]["backend"],
                 },
               })
             }
           >
-            <option value="tiny">tiny — fastest, roughest (75 MB)</option>
-            <option value="base">base (142 MB)</option>
-            <option value="small">small — recommended (466 MB)</option>
-            <option value="medium">medium (1.5 GB)</option>
-            <option value="large-v3-turbo">large-v3-turbo — best (1.6 GB)</option>
+            <option value="local">This machine — whisper.cpp, audio never leaves it</option>
+            <option value="hosted">A hosted service — audio is uploaded to it</option>
           </select>
         </label>
         <label className="row">
@@ -196,21 +199,150 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
             }
           />
         </label>
-        {whisper && (
-          <p className="muted">
-            {whisper.cached ? "Weights are downloaded." : `Not downloaded yet (~${whisper.approxMb} MB).`}
-          </p>
+
+        {settings.narration.backend === "local" && (
+          <>
+            <label className="row">
+              <span className="label">Model</span>
+              <select
+                value={settings.narration.model}
+                onChange={(e) =>
+                  patch({
+                    narration: {
+                      ...settings.narration,
+                      model: e.target.value as Settings["narration"]["model"],
+                    },
+                  })
+                }
+              >
+                <option value="tiny">tiny — fastest, roughest (75 MB)</option>
+                <option value="base">base (142 MB)</option>
+                <option value="small">small — recommended (466 MB)</option>
+                <option value="medium">medium (1.5 GB)</option>
+                <option value="large-v3-turbo">large-v3-turbo — best (1.6 GB)</option>
+              </select>
+            </label>
+            {whisper && (
+              <p className="muted">
+                {whisper.cached
+                  ? "Weights are downloaded."
+                  : `Not downloaded yet (~${whisper.approxMb} MB).`}
+              </p>
+            )}
+            {download !== null && download < 1 && (
+              <p className="progress">Downloading… {Math.round(download * 100)}%</p>
+            )}
+            <button
+              className="ghost"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await api.downloadWhisper();
+                  setWhisper(await api.whisperStatus());
+                  setDownload(null);
+                })
+              }
+            >
+              Download weights now
+            </button>
+          </>
         )}
-        {download !== null && download < 1 && (
-          <p className="progress">Downloading… {Math.round(download * 100)}%</p>
+
+        {settings.narration.backend === "hosted" && (
+          <>
+            <p className="warn">
+              With this on, the narration audio of each recording you transcribe is uploaded to
+              the endpoint below. Nothing is sent until you press Transcribe on a recording.
+            </p>
+            <div className="presets">
+              {TRANSCRIPTION_PRESETS.map((preset) => (
+                <button
+                  key={preset.key}
+                  className="ghost"
+                  onClick={() =>
+                    patch({
+                      narration: {
+                        ...settings.narration,
+                        hosted: {
+                          ...settings.narration.hosted,
+                          baseUrl: preset.baseUrl,
+                          model: preset.model,
+                        },
+                      },
+                    })
+                  }
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <label className="row">
+              <span className="label">Base URL</span>
+              <input
+                value={settings.narration.hosted.baseUrl}
+                placeholder="https://api.openai.com/v1"
+                onChange={(e) =>
+                  patch({
+                    narration: {
+                      ...settings.narration,
+                      hosted: { ...settings.narration.hosted, baseUrl: e.target.value },
+                    },
+                  })
+                }
+              />
+            </label>
+            <label className="row">
+              <span className="label">Model</span>
+              <input
+                value={settings.narration.hosted.model}
+                placeholder="whisper-1"
+                onChange={(e) =>
+                  patch({
+                    narration: {
+                      ...settings.narration,
+                      hosted: { ...settings.narration.hosted, model: e.target.value },
+                    },
+                  })
+                }
+              />
+            </label>
+            <label className="row">
+              <span className="label">API key</span>
+              <input
+                type="password"
+                value={settings.narration.hosted.apiKey}
+                placeholder="optional for a self-hosted server"
+                onChange={(e) =>
+                  patch({
+                    narration: {
+                      ...settings.narration,
+                      hosted: { ...settings.narration.hosted, apiKey: e.target.value },
+                    },
+                  })
+                }
+              />
+            </label>
+            <p className="muted hint">
+              Anything speaking the OpenAI transcription API: OpenAI, Groq, or a self-hosted
+              server. Audio is sent as 16-bit WAV in five-minute parts.
+            </p>
+          </>
         )}
-        <button className="ghost" disabled={busy} onClick={() => run(async () => {
-          await api.downloadWhisper();
-          setWhisper(await api.whisperStatus());
-          setDownload(null);
-        })}>
-          Download weights now
-        </button>
+
+        <div className="actions">
+          <button
+            className="ghost"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                setSettings(await api.saveSettings(settings));
+                setSaved(true);
+              })
+            }
+          >
+            Save
+          </button>
+        </div>
       </div>
 
       <div className="panel">

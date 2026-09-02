@@ -179,6 +179,12 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                   This recording has narration that has not been transcribed. Analysis waits for
                   it — your own words are the clearest statement of what you were doing.
                 </p>
+                {detail.transcribeVia === "hosted" && (
+                  <p className="warn">
+                    Settings point transcription at {detail.transcribeHost || "a hosted service"}.
+                    Pressing Transcribe uploads this recording's narration audio there.
+                  </p>
+                )}
                 <button
                   disabled={busy}
                   onClick={() =>
@@ -189,7 +195,9 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                     })
                   }
                 >
-                  Transcribe on this machine
+                  {detail.transcribeVia === "hosted"
+                    ? `Transcribe via ${detail.transcribeHost || "hosted service"}`
+                    : "Transcribe on this machine"}
                 </button>
               </div>
             )}

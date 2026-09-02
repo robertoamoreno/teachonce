@@ -23,13 +23,15 @@ all. That is not a policy statement — it is checkable:
 
 ```bash
 cargo tree -p skillrec-capture   | grep -c reqwest   # 0
-cargo tree -p skillrec-narration | grep -c reqwest   # 1, only to fetch Whisper weights
+cargo tree -p skillrec-narration | grep -c reqwest   # 1, Whisper weights + optional hosted transcription
 cargo tree -p skillrec-agent     | grep -c reqwest   # 1, the analysis endpoint
 ```
 
 Nothing is sent anywhere until you press **Analyse**, and then only the timeline,
 the events, the narration text, and any screen frames the model explicitly asks
-to look at.
+to look at. The one other outbound path is optional hosted transcription, which
+you have to turn on in Settings and which uploads narration audio only when you
+press **Transcribe**.
 
 ## Configuring the model
 
@@ -91,8 +93,15 @@ you can see exactly what a model could be shown before you analyse.
 `get_timeline` tool returns, and the fallback if you never configure an endpoint.
 
 **3. Transcribe** *(if you narrated)* — whisper.cpp with Metal acceleration, on
-this machine. Analysis refuses to run on untranscribed narration: your own words
-are the clearest statement of intent in the recording.
+this machine, by default. Analysis refuses to run on untranscribed narration: your
+own words are the clearest statement of intent in the recording.
+
+Settings → Narration → **Transcribe with** can instead point at a hosted service
+speaking the OpenAI transcription API (OpenAI `whisper-1`, Groq
+`whisper-large-v3-turbo`, or a self-hosted server). That is the one path on which
+narration audio leaves the machine, it is off by default, and the Transcribe button
+says where the audio will go before you press it. Audio is re-encoded as 16-bit WAV
+and uploaded in five-minute parts, each stamped back onto the session clock.
 
 **4. Analyse** — a tool-calling agent reconstructs your intent and the ordered
 steps. It reads the timeline, then the narration, then events where something is
@@ -118,9 +127,9 @@ get a second say.
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     64 tests
+crates/core         events, session store, timeline, config     65 tests
 crates/capture      screen, window, clipboard, audio (macOS)    41 tests
-crates/narration    whisper.cpp transcription                    8 tests
+crates/narration    whisper.cpp + hosted transcription          15 tests
 crates/agent        client, agent loop, describer, debrief     52 + 13 tests
 crates/recorder     the lifecycle state machine                  9 tests
 src-tauri           commands, tray, hotkey
@@ -144,7 +153,7 @@ macOS will ask for Screen Recording on first capture, and for Automation the
 first time you record with a given browser in front.
 
 ```bash
-cargo test --workspace                              # 187 tests
+cargo test --workspace                              # 195 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```
