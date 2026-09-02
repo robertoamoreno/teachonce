@@ -52,6 +52,15 @@ pub fn run() {
         .setup(|app| {
             app.manage(AppState::new(app.package_info().version.to_string()));
 
+            // The app shipped as "Skill Recorder" before it was TeachOnce, under a
+            // different identifier and therefore a different data folder. Adopt
+            // that folder once, so existing recordings simply carry on.
+            match skillrec_core::paths::adopt_legacy_data_dir() {
+                Ok(Some(dir)) => tracing::info!(to = %dir.display(), "moved recordings from the Skill Recorder folder"),
+                Ok(None) => {}
+                Err(err) => tracing::warn!("could not adopt the Skill Recorder data folder: {err:#}"),
+            }
+
             // Heal anything a crash or force-quit left half-written, before the
             // library is ever listed.
             match skillrec_recorder::recover_interrupted_sessions() {
@@ -71,7 +80,7 @@ pub fn run() {
             if let Ok(mut slot) = app.state::<AppState>().tray_toggle.lock() {
                 *slot = Some(toggle.clone());
             }
-            let show = MenuItem::with_id(app, "show", "Open Skill Recorder", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Open TeachOnce", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle, &show, &quit])?;
 
@@ -135,9 +144,10 @@ pub fn run() {
             commands::whisper_status,
             commands::download_whisper_model,
             commands::transcribe_session,
+            commands::app_info,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Skill Recorder");
+        .expect("error while running TeachOnce");
 }
 
 /// Push a status change to the UI, and keep the tray item's label honest.

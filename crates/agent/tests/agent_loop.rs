@@ -58,9 +58,18 @@ impl StubServer {
                 }
 
                 let index = counter.fetch_add(1, Ordering::SeqCst).min(responses.len() - 1);
-                let payload = serde_json::to_string(&responses[index]).unwrap();
+                // A canned response may carry `__status` to answer with an
+                // error code instead of 200; the key itself is not sent.
+                let mut canned = responses[index].clone();
+                let status = canned
+                    .as_object_mut()
+                    .and_then(|o| o.remove("__status"))
+                    .and_then(|s| s.as_u64())
+                    .unwrap_or(200);
+                let reason = if status == 200 { "OK" } else { "Error" };
+                let payload = serde_json::to_string(&canned).unwrap();
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     payload.len(),
                     payload
                 );
@@ -174,6 +183,46 @@ fn build(config: LlmConfig, captured: Arc<std::sync::Mutex<Option<Value>>>, call
 }
 
 // --- Tests -------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_server_that_rejects_reasoning_effort_gets_it_dropped_and_the_turn_completes() {
+    let server = StubServer::start(vec![
+        json!({ "__status": 400, "error": { "message": "Unrecognized request argument supplied: reasoning_effort" } }),
+        tool_call("submit_analysis", json!({ "intent": "x" }), Some("c1")),
+    ]);
+    let mut config = server.config();
+    config.reasoning_effort = "none".into();
+    let captured = Arc::new(std::sync::Mutex::new(None));
+    let mut agent = build(config, Arc::clone(&captured), Arc::new(AtomicUsize::new(0)));
+
+    agent.run_turn("go", &noop).await.unwrap();
+
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2, "one rejected request, one retry");
+    assert_eq!(requests[0]["reasoning_effort"], "none");
+    assert!(requests[1].get("reasoning_effort").is_none(), "dropped after the rejection");
+    assert!(captured.lock().unwrap().is_some());
+}
+
+#[tokio::test]
+async fn progress_names_every_model_turn_and_tool_call() {
+    let server = StubServer::start(vec![
+        tool_call("get_timeline", json!({}), Some("c1")),
+        tool_call("submit_analysis", json!({ "intent": "x" }), Some("c2")),
+    ]);
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = {
+        let seen = Arc::clone(&seen);
+        move |p: AgentProgress| seen.lock().unwrap().push(format!("{}:{}", p.phase, p.message))
+    };
+    let mut agent = build(server.config(), Arc::new(std::sync::Mutex::new(None)), Arc::new(AtomicUsize::new(0)));
+    agent.run_turn("go", &sink).await.unwrap();
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0], "model:Waiting for the model…");
+    assert!(seen.contains(&"tool:Running get_timeline…".to_string()));
+    assert!(seen.contains(&"model:Waiting for the model (turn 2)…".to_string()));
+}
 
 #[tokio::test]
 async fn a_read_tool_then_a_terminal_tool_completes_the_turn() {

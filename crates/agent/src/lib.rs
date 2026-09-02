@@ -1,4 +1,4 @@
-//! The analysis side of Skill Recorder — and the **only** crate in this
+//! The analysis side of TeachOnce — and the **only** crate in this
 //! workspace that opens a network connection.
 //!
 //! Everything else (capture, frame selection, transcription) runs locally with

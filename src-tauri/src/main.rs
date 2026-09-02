@@ -1,7 +1,6 @@
-// Prevents a console window from opening alongside the app on Windows release
-// builds. Harmless on macOS, kept so the crate stays portable.
+// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    skill_recorder_lib::run()
+    teachonce_lib::run()
 }

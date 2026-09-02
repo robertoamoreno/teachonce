@@ -1,4 +1,4 @@
-//! Shared vocabulary for Skill Recorder: the event schema every collector
+//! Shared vocabulary for TeachOnce: the event schema every collector
 //! produces, the on-disk session layout, the capture/LLM configuration, and the
 //! deterministic timeline that turns a raw event stream into ordered steps.
 //!

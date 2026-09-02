@@ -4817,29 +4817,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
-name = "skill-recorder"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "serde",
- "serde_json",
- "skillrec-agent",
- "skillrec-capture",
- "skillrec-core",
- "skillrec-narration",
- "skillrec-recorder",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "skillrec-agent"
 version = "0.1.0"
 dependencies = [
@@ -5487,6 +5464,29 @@ dependencies = [
  "dunce",
  "embed-resource",
  "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
+name = "teachonce"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "serde",
+ "serde_json",
+ "skillrec-agent",
+ "skillrec-capture",
+ "skillrec-core",
+ "skillrec-narration",
+ "skillrec-recorder",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

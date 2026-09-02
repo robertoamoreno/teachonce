@@ -116,6 +116,19 @@ impl Agent {
         let mut prompted_tools = false;
 
         for iteration in 1..=MAX_ITERATIONS {
+            // A local model can sit in one completion for minutes. Saying so
+            // before each request keeps the progress line honest: the user sees
+            // which turn is running, not a message frozen since the first one.
+            on_progress(AgentProgress {
+                session_id: self.session_id.clone(),
+                phase: "model".into(),
+                message: if iteration == 1 {
+                    "Waiting for the model…".into()
+                } else {
+                    format!("Waiting for the model (turn {iteration})…")
+                },
+            });
+
             let sent: &[ToolDef] = if prompted_tools { &[] } else { &definitions };
             let completion = match self.client.complete(&self.messages, sent).await {
                 Ok(completion) => completion,

@@ -145,6 +145,15 @@ button.small { padding: 3px 10px; font-size: 12px; }
 .edit-step textarea { min-height: 48px; resize: vertical; }
 .edit-step .tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
+/* Settings */
+.hint { font-size: 12.5px; margin: -4px 0 10px 120px; }
+
+/* About */
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0; align-items: center; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.kv code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; word-break: break-all; }
+
 /* Debrief */
 .count-pill { margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--accent); background: var(--line); border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
 .questions { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 12px; }

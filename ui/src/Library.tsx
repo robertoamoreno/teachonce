@@ -29,6 +29,15 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
   const [planFeedback, setPlanFeedback] = useState("");
   const [progress, setProgress] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  // When the current model job started, so the progress line can show how
+  // long it has been waiting: a local model can sit in one turn for minutes.
+  const [busySince, setBusySince] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (busySince === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [busySince]);
   const [feedback, setFeedback] = useState("");
   const [editing, setEditing] = useState(false);
 
@@ -75,6 +84,7 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
+    setBusySince(Date.now());
     setProgress("Working…");
     try {
       await action();
@@ -82,9 +92,11 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
       onError(String(err));
     } finally {
       setBusy(false);
+      setBusySince(null);
       setProgress("");
     }
   };
+  const elapsed = busySince === null ? 0 : Math.max(0, Math.round((now - busySince) / 1000));
 
   /**
    * Take a proposed or refined plan on board. A value the user already edited
@@ -153,7 +165,12 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
               </button>
             </header>
 
-            {busy && <p className="progress">{progress}</p>}
+            {busy && (
+              <p className="progress">
+                {progress}
+                {elapsed >= 5 && <span className="muted"> · {formatSpan(elapsed * 1000)}</span>}
+              </p>
+            )}
 
             {detail.needsTranscription && (
               <div className="panel">

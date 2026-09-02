@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, events, type ConnectionTest, type Settings } from "./api";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { api, events, type AppInfo, type ConnectionTest, type Settings } from "./api";
 
 /** Endpoints people actually run, so the common cases are one click away. */
 const PRESETS = [
@@ -16,10 +17,12 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
   const [download, setDownload] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [about, setAbout] = useState<AppInfo | null>(null);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch((err) => onError(String(err)));
     api.whisperStatus().then(setWhisper).catch(() => undefined);
+    api.appInfo().then(setAbout).catch(() => undefined);
     const unlisten = events.onDownload((p) => setDownload(p.fraction));
     return () => {
       unlisten.then((off) => off());
@@ -91,6 +94,24 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
             onChange={(e) => patch({ llm: { ...settings.llm, apiKey: e.target.value } })}
           />
         </label>
+        <label className="row">
+          <span className="label">Reasoning</span>
+          <select
+            value={settings.llm.reasoningEffort || "default"}
+            onChange={(e) => patch({ llm: { ...settings.llm, reasoningEffort: e.target.value } })}
+          >
+            <option value="default">Model default</option>
+            <option value="none">None — fastest, recommended for thinking models like qwen3</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+        <p className="muted hint">
+          Sent as reasoning_effort. A thinking model spends most of a turn reasoning before it
+          answers; on a laptop that is the difference between seconds and minutes. A server that
+          rejects the field is detected and it is dropped automatically.
+        </p>
         <label className="row">
           <input
             type="checkbox"
@@ -230,6 +251,50 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
         >
           Save
         </button>
+      </div>
+
+      <div className="panel about">
+        <h2>About {about?.name ?? "TeachOnce"}</h2>
+        <p className="muted">
+          {about ? `Version ${about.version} · ${about.identifier} · ${about.license}` : "Loading…"}
+        </p>
+        <p>
+          Record yourself doing a task once, answer a few questions about it, and hand your agent
+          the skill. Capture, reconstruction and transcription run on this machine; only the
+          analysis step talks to the model endpoint you choose, and only when you press Analyse.
+        </p>
+        {about && (
+          <dl className="kv">
+            <dt>Recordings</dt>
+            <dd>
+              <code>{about.dataDir}</code>
+              <button
+                className="ghost small"
+                onClick={() => revealItemInDir(about.dataDir).catch((err) => onError(String(err)))}
+              >
+                Show in Finder
+              </button>
+            </dd>
+            <dt>Skills</dt>
+            <dd>
+              <code>{about.skillsDir}</code>
+            </dd>
+          </dl>
+        )}
+        <p className="muted">
+          Built with Tauri, React, whisper.cpp, xcap, arboard and cpal. Began as a Rust port of the
+          idea behind Microsoft's open-source Skill Recorder.
+        </p>
+        <div className="actions">
+          <button
+            className="ghost"
+            onClick={() =>
+              openUrl(about?.website ?? "https://teachonce.ai").catch((err) => onError(String(err)))
+            }
+          >
+            teachonce.ai
+          </button>
+        </div>
       </div>
     </section>
   );

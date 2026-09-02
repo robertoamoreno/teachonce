@@ -1,12 +1,12 @@
 [package]
-name = "skill-recorder"
+name = "teachonce"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Record a task once, turn it into a skill your agent can repeat."
+description = "Teach it once: record a task and hand your agent the skill."
 
 [lib]
-name = "skill_recorder_lib"
+name = "teachonce_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

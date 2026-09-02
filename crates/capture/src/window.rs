@@ -60,8 +60,8 @@ pub fn active_window() -> Option<ActiveWindow> {
     }
     // Our own window is never part of the user's task — they only touch it to
     // press Start and Stop. Filtering by pid rather than by app name is what
-    // makes this actually work: the bundled app reports "Skill Recorder" but a
-    // `cargo run` build reports "skill-recorder", and a name-based filter misses
+    // makes this actually work: the bundled app reports "TeachOnce" but a
+    // `cargo run` build reports "teachonce", and a name-based filter misses
     // one of them. The pid is exact and cannot drift.
     if focused.pid().unwrap_or(0) == std::process::id() {
         return None;

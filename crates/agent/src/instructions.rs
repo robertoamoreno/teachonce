@@ -65,7 +65,7 @@ All times are **atMs = milliseconds since the recording started**.
 
 ## Noise to ignore
 
-- **The Skill Recorder app itself.** Focusing it is how the user reaches Start
+- **The TeachOnce app itself** (formerly "Skill Recorder"). Focusing it is how the user reaches Start
   and Stop. It is never part of their task.
 - **OS permission dialogs** — the recorder's own prompts, not user actions.
 - **URL tracking parameters** (utm_*, gclid, fbclid) — two URLs differing only in

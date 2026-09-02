@@ -1,7 +1,7 @@
 //! Where everything lives on disk.
 //!
 //! ```text
-//! ~/Library/Application Support/com.skillrecorder.app/
+//! ~/Library/Application Support/ai.teachonce.app/
 //!   settings.json                  capture + LLM configuration
 //!   models/ggml-<model>.bin        whisper weights (downloaded once)
 //!   sessions/<id>/
@@ -20,9 +20,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-const QUALIFIER: &str = "com";
-const ORGANIZATION: &str = "skillrecorder";
+const QUALIFIER: &str = "ai";
+const ORGANIZATION: &str = "teachonce";
 const APPLICATION: &str = "app";
+
+/// The identifier the app shipped under as "Skill Recorder". Its data folder is
+/// adopted on first launch, so a rename never hides anyone's recordings.
+const LEGACY: (&str, &str, &str) = ("com", "skillrecorder", "app");
 
 /// Root application-data directory, honouring `SKILLREC_DATA_DIR` so tests and
 /// dev runs never touch a real user's recordings.
@@ -33,6 +37,36 @@ pub fn data_root() -> Result<PathBuf> {
     let dirs = directories::ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .context("could not resolve the application data directory")?;
     Ok(dirs.data_dir().to_path_buf())
+}
+
+/// Move the pre-rename data folder into place, once.
+///
+/// Returns the new location when something was moved. Does nothing under
+/// `SKILLREC_DATA_DIR`, when there is no old folder, or when the new one
+/// already exists — in that last case both are left alone rather than merged,
+/// because merging two session trees silently is how recordings get lost.
+pub fn adopt_legacy_data_dir() -> Result<Option<PathBuf>> {
+    if std::env::var_os("SKILLREC_DATA_DIR").is_some() {
+        return Ok(None);
+    }
+    let Some(old) = directories::ProjectDirs::from(LEGACY.0, LEGACY.1, LEGACY.2) else {
+        return Ok(None);
+    };
+    move_data_dir(old.data_dir(), &data_root()?)
+}
+
+/// Rename `old` to `new` when `old` exists and `new` does not.
+pub fn move_data_dir(old: &Path, new: &Path) -> Result<Option<PathBuf>> {
+    if !old.is_dir() || new.exists() {
+        return Ok(None);
+    }
+    if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::rename(old, new)
+        .with_context(|| format!("moving {} to {}", old.display(), new.display()))?;
+    Ok(Some(new.to_path_buf()))
 }
 
 /// Directory holding every recording.
@@ -125,6 +159,31 @@ mod tests {
         assert!(!is_valid_session_id("a\\b"));
         assert!(!is_valid_session_id(""));
         assert!(!is_valid_session_id(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn the_old_data_folder_is_adopted_once_and_never_merged() {
+        let base = std::env::temp_dir().join(format!("skillrec-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let old = base.join("com.skillrecorder.app");
+        let new = base.join("ai.teachonce.app");
+
+        // Nothing to move.
+        assert!(move_data_dir(&old, &new).unwrap().is_none());
+
+        std::fs::create_dir_all(old.join("sessions/abc")).unwrap();
+        std::fs::write(old.join("sessions/abc/session.json"), "{}").unwrap();
+        assert_eq!(move_data_dir(&old, &new).unwrap(), Some(new.clone()));
+        assert!(new.join("sessions/abc/session.json").exists());
+        assert!(!old.exists());
+
+        // A second old folder appearing later is left where it is: both trees
+        // exist, and a silent merge could clobber recordings.
+        std::fs::create_dir_all(&old).unwrap();
+        assert!(move_data_dir(&old, &new).unwrap().is_none());
+        assert!(old.exists() && new.exists());
+
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

@@ -374,6 +374,36 @@ pub async fn build_skill(
     Ok(BuildResult { skill, path: path.display().to_string() })
 }
 
+// --- About -------------------------------------------------------------------
+
+/// What the About panel shows: the facts a user needs to find their data, name
+/// the build in a bug report, and know where the app's edges are.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    pub name: String,
+    pub version: String,
+    pub identifier: String,
+    pub data_dir: String,
+    pub skills_dir: String,
+    pub website: String,
+    pub license: String,
+}
+
+#[tauri::command]
+pub fn app_info(app: AppHandle) -> Reply<AppInfo> {
+    let package = app.package_info();
+    Ok(AppInfo {
+        name: package.name.clone(),
+        version: package.version.to_string(),
+        identifier: app.config().identifier.clone(),
+        data_dir: skillrec_core::paths::data_root().map_err(fail)?.display().to_string(),
+        skills_dir: skillrec_core::paths::skills_root().map_err(fail)?.display().to_string(),
+        website: "https://teachonce.ai".into(),
+        license: "MIT".into(),
+    })
+}
+
 // --- Narration ---------------------------------------------------------------
 
 #[derive(Serialize)]

@@ -67,6 +67,11 @@ pub struct LlmConfig {
     /// Per-request timeout in seconds. Generous, because a local 7B model on a
     /// laptop can take a while on a long tool-call turn.
     pub request_timeout_secs: u64,
+    /// Sent as `reasoning_effort` unless it is `default`. Thinking models such
+    /// as qwen3 spend most of a turn reasoning; `none` makes them answer at
+    /// once, which on a laptop is the difference between five seconds and three
+    /// minutes. A server that rejects the field is detected and it is dropped.
+    pub reasoning_effort: String,
 }
 
 impl Default for LlmConfig {
@@ -84,11 +89,18 @@ impl Default for LlmConfig {
             temperature: 0.1,
             max_tokens: 4096,
             request_timeout_secs: 300,
+            reasoning_effort: "default".into(),
         }
     }
 }
 
 impl LlmConfig {
+    /// The `reasoning_effort` value to send, if any.
+    pub fn reasoning_effort_to_send(&self) -> Option<&str> {
+        let value = self.reasoning_effort.trim();
+        (!value.is_empty() && !value.eq_ignore_ascii_case("default")).then_some(value)
+    }
+
     /// Full URL of the chat-completions endpoint.
     pub fn chat_completions_url(&self) -> String {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
@@ -248,5 +260,17 @@ mod tests {
         assert_eq!(s.llm.model, "gpt-4o-mini");
         assert_eq!(s.llm.base_url, LlmConfig::default().base_url);
         assert!(s.capture.clipboard);
+        // A settings file from before the field existed sends nothing.
+        assert_eq!(s.llm.reasoning_effort_to_send(), None);
+    }
+
+    #[test]
+    fn reasoning_effort_is_only_sent_when_set_to_something() {
+        for value in ["default", "Default", "", "  "] {
+            let cfg = LlmConfig { reasoning_effort: value.into(), ..Default::default() };
+            assert_eq!(cfg.reasoning_effort_to_send(), None, "{value:?} must not be sent");
+        }
+        let cfg = LlmConfig { reasoning_effort: " none ".into(), ..Default::default() };
+        assert_eq!(cfg.reasoning_effort_to_send(), Some("none"));
     }
 }

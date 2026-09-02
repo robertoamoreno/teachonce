@@ -1,8 +1,8 @@
-# Skill Recorder (Rust)
+# TeachOnce
 
-**Record yourself doing a task once, then turn it into a skill your AI agent can repeat.**
+**Teach it once. Record yourself doing a task, answer a few questions about it, and hand your agent the skill.**
 
-A Rust + Tauri reimplementation of the idea behind
+TeachOnce began as a Rust + Tauri reimplementation of the idea behind
 [microsoft/skill-recorder](https://github.com/microsoft/skill-recorder), with one
 structural change: **everything runs locally except the analysis step, and that
 step points at any OpenAI-compatible endpoint you configure.**
@@ -40,6 +40,12 @@ Settings → Model endpoint. Anything speaking the OpenAI chat-completions API:
 | llama.cpp | `http://localhost:8080/v1` | No `/models` route; the connection test handles that. |
 | OpenAI | `https://api.openai.com/v1` | Needs a real key. |
 | vLLM / OpenRouter / … | your URL | Same contract. |
+
+**Reasoning.** Thinking models such as `qwen3` spend most of a turn reasoning before
+they answer; on a laptop that is the difference between a five-second turn and a
+three-minute one. Settings → Reasoning → **None** sends `reasoning_effort: none`,
+which Ollama honours. A server that rejects the field is detected and it is dropped
+for the rest of the session, so the setting is safe to leave on.
 
 Turn off **"This model can see images"** for a text-only model. The describer then
 never offers itself the frame tools and works from events and narration alone,
@@ -110,10 +116,10 @@ get a second say.
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     62 tests
+crates/core         events, session store, timeline, config     64 tests
 crates/capture      screen, window, clipboard, audio (macOS)    41 tests
 crates/narration    whisper.cpp transcription                    8 tests
-crates/agent        client, agent loop, describer, debrief     50 + 11 tests
+crates/agent        client, agent loop, describer, debrief     52 + 13 tests
 crates/recorder     the lifecycle state machine                  9 tests
 src-tauri           commands, tray, hotkey
 ui                  React 19
@@ -136,7 +142,7 @@ macOS will ask for Screen Recording on first capture, and for Automation the
 first time you record with a given browser in front.
 
 ```bash
-cargo test --workspace                              # 181 tests
+cargo test --workspace                              # 187 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```
@@ -144,7 +150,7 @@ cargo run -p skillrec-capture --example smoke       # 4s live capture, prints wh
 ## On disk
 
 ```
-~/Library/Application Support/com.skillrecorder.app/
+~/Library/Application Support/ai.teachonce.app/
   settings.json
   models/ggml-small.bin
   sessions/<id>/
@@ -155,6 +161,12 @@ cargo run -p skillrec-capture --example smoke       # 4s live capture, prints wh
 ```
 
 Built skills go to `~/.config/skills/<name>/SKILL.md`, or a folder you pick.
+
+Recordings made while the app was still called Skill Recorder lived under
+`com.skillrecorder.app`; the first launch of TeachOnce moves that folder into
+place. macOS ties Screen Recording, Microphone and Automation grants to the
+bundle identifier, so they need granting again after the rename. Settings →
+About shows the version, where recordings live, and a button to reveal them.
 
 ## Keep secrets out of recordings
 

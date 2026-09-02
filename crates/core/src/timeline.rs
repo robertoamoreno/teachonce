@@ -131,9 +131,10 @@ pub fn host_of(url: &str) -> Option<String> {
 ///
 /// The capture side already filters this out by pid, which is exact. This is the
 /// backstop for recordings made before that fix, and for any build whose window
-/// slips through — hence matching both the bundled display name and the cargo
-/// binary name.
-const RECORDER_APP_NAMES: &[&str] = &["skill recorder", "skill-recorder", "skillrecorder"];
+/// slips through — hence matching the bundled display name, the cargo binary
+/// name, and the names the app shipped under before it was TeachOnce.
+const RECORDER_APP_NAMES: &[&str] =
+    &["teachonce", "teach once", "skill recorder", "skill-recorder", "skillrecorder"];
 
 fn is_recorder_app(app: &str) -> bool {
     let app = app.trim().to_lowercase();
@@ -426,7 +427,7 @@ mod tests {
         // Observed in a real 78-minute recording: the `cargo run` build reports
         // "skill-recorder", so a filter matching only the bundled display name
         // left a trailing "went back to press Stop" step in the reconstruction.
-        for name in ["Skill Recorder", "skill-recorder", "SkillRecorder", " skill recorder "] {
+        for name in ["TeachOnce", "teachonce", "Skill Recorder", "skill-recorder", "SkillRecorder", " skill recorder "] {
             let bundle = Builder::new()
                 .activate(0, "Safari", "Pricing")
                 .url(500, "Safari", "https://example.com/pricing")

@@ -163,6 +163,7 @@ export interface Settings {
     temperature: number;
     maxTokens: number;
     requestTimeoutSecs: number;
+    reasoningEffort: string;
   };
   narration: {
     model: "tiny" | "base" | "small" | "medium" | "large-v3-turbo";
@@ -186,6 +187,16 @@ export interface AgentProgress {
   sessionId: string;
   phase: string;
   message: string;
+}
+
+export interface AppInfo {
+  name: string;
+  version: string;
+  identifier: string;
+  dataDir: string;
+  skillsDir: string;
+  website: string;
+  license: string;
 }
 
 export interface DownloadProgress {
@@ -235,6 +246,8 @@ export const api = {
       values,
       exportDir: exportDir ?? null,
     }),
+
+  appInfo: () => invoke<AppInfo>("app_info"),
 
   whisperStatus: () =>
     invoke<{ model: string; cached: boolean; approxMb: number }>("whisper_status"),

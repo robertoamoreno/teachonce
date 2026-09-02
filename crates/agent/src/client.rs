@@ -15,6 +15,7 @@
 //! Everything here is written to be permissive on the way in and conservative on
 //! the way out.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -219,6 +220,8 @@ struct ChatRequest<'a> {
     tools: &'a [ToolDef],
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +265,9 @@ pub struct ConnectionTest {
 pub struct LlmClient {
     http: reqwest::Client,
     config: LlmConfig,
+    /// Set once the server has refused `reasoning_effort`, so it is not sent
+    /// again for the life of this client.
+    reasoning_rejected: AtomicBool,
 }
 
 impl LlmClient {
@@ -271,7 +277,15 @@ impl LlmClient {
             .timeout(Duration::from_secs(config.request_timeout_secs))
             .build()
             .context("building the HTTP client")?;
-        Ok(Self { http, config })
+        Ok(Self { http, config, reasoning_rejected: AtomicBool::new(false) })
+    }
+
+    /// The `reasoning_effort` to put on the wire right now.
+    fn reasoning_to_send(&self) -> Option<&str> {
+        if self.reasoning_rejected.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.config.reasoning_effort_to_send()
     }
 
     pub fn config(&self) -> &LlmConfig {
@@ -367,52 +381,83 @@ impl LlmClient {
     }
 
     async fn complete_once(&self, messages: &[ChatMessage], tools: &[ToolDef]) -> Result<Completion> {
-        // Only `tool_choice: "auto"` is safe to send universally. `"required"`
-        // is widely unimplemented, and a server that validates the field rejects
-        // the whole request rather than ignoring it — so when the agent needs a
-        // specific tool called it nudges in prose instead (see `agent.rs`).
-        let request = ChatRequest {
-            model: &self.config.model,
-            messages,
-            temperature: self.config.temperature,
-            max_tokens: self.config.max_tokens,
-            tools,
-            tool_choice: (!tools.is_empty()).then_some("auto"),
-        };
+        loop {
+            // Only `tool_choice: "auto"` is safe to send universally. `"required"`
+            // is widely unimplemented, and a server that validates the field
+            // rejects the whole request rather than ignoring it — so when the
+            // agent needs a specific tool called it nudges in prose instead
+            // (see `agent.rs`).
+            let reasoning = self.reasoning_to_send();
+            let request = ChatRequest {
+                model: &self.config.model,
+                messages,
+                temperature: self.config.temperature,
+                max_tokens: self.config.max_tokens,
+                tools,
+                tool_choice: (!tools.is_empty()).then_some("auto"),
+                reasoning_effort: reasoning,
+            };
 
-        let response = self
-            .http
-            .post(self.config.chat_completions_url())
-            .bearer_auth(&self.config.api_key)
-            .json(&request)
-            .send()
-            .await
-            .context("sending the completion request")?;
+            let response = self
+                .http
+                .post(self.config.chat_completions_url())
+                .bearer_auth(&self.config.api_key)
+                .json(&request)
+                .send()
+                .await
+                .context("sending the completion request")?;
 
-        let status = response.status();
-        let body = response.text().await.context("reading the completion response")?;
+            let status = response.status();
+            let body = response.text().await.context("reading the completion response")?;
 
-        if !status.is_success() {
-            let detail = serde_json::from_str::<ChatResponse>(&body)
-                .ok()
-                .and_then(|r| r.error.map(|e| e.message))
-                .unwrap_or_else(|| body.chars().take(400).collect());
-            anyhow::bail!("the model server answered {status}: {detail}");
+            if !status.is_success() {
+                let detail = serde_json::from_str::<ChatResponse>(&body)
+                    .ok()
+                    .and_then(|r| r.error.map(|e| e.message))
+                    .unwrap_or_else(|| body.chars().take(400).collect());
+                // `reasoning_effort` is the one optional field worth sending on
+                // spec: it is what makes a thinking model usable locally. A
+                // server that validates its request body rejects it outright,
+                // so the field is dropped for good and the request goes again.
+                if reasoning.is_some() && is_reasoning_unsupported(status, &detail) {
+                    tracing::info!(
+                        "the model server rejects reasoning_effort; sending without it from now on"
+                    );
+                    self.reasoning_rejected.store(true, Ordering::Relaxed);
+                    continue;
+                }
+                anyhow::bail!("the model server answered {status}: {detail}");
+            }
+
+            let parsed: ChatResponse = serde_json::from_str(&body)
+                .with_context(|| format!("parsing the completion response: {}", preview(&body)))?;
+            if let Some(error) = parsed.error {
+                anyhow::bail!("the model server reported an error: {}", error.message);
+            }
+            let choice = parsed
+                .choices
+                .into_iter()
+                .next()
+                .context("the model server returned no choices")?;
+
+            return Ok(Completion { message: choice.message, finish_reason: choice.finish_reason });
         }
-
-        let parsed: ChatResponse = serde_json::from_str(&body)
-            .with_context(|| format!("parsing the completion response: {}", preview(&body)))?;
-        if let Some(error) = parsed.error {
-            anyhow::bail!("the model server reported an error: {}", error.message);
-        }
-        let choice = parsed
-            .choices
-            .into_iter()
-            .next()
-            .context("the model server returned no choices")?;
-
-        Ok(Completion { message: choice.message, finish_reason: choice.finish_reason })
     }
+}
+
+/// Did a 4xx come from the server not knowing `reasoning_effort`?
+///
+/// OpenAI answers "Unrecognized request argument supplied: reasoning_effort"
+/// or "Unsupported parameter" for models without reasoning; other servers say
+/// "unknown field". Anything naming the field or the concept counts.
+pub fn is_reasoning_unsupported(status: reqwest::StatusCode, detail: &str) -> bool {
+    if !status.is_client_error() {
+        return false;
+    }
+    let text = detail.to_lowercase();
+    text.contains("reasoning")
+        || ((text.contains("unrecognized") || text.contains("unsupported") || text.contains("unknown field"))
+            && text.contains("effort"))
 }
 
 /// Did the server reject the request because this model has no tool support?
@@ -534,6 +579,41 @@ mod tests {
         // A malformed request will fail identically three times.
         assert!(!is_retryable(&anyhow::anyhow!("the model server answered 400: bad model")));
         assert!(!is_retryable(&anyhow::anyhow!("the model server answered 401: no key")));
+    }
+
+    #[test]
+    fn reasoning_rejections_are_recognised_only_on_client_errors_that_name_it() {
+        use reqwest::StatusCode;
+        assert!(is_reasoning_unsupported(
+            StatusCode::BAD_REQUEST,
+            "Unrecognized request argument supplied: reasoning_effort"
+        ));
+        assert!(is_reasoning_unsupported(
+            StatusCode::BAD_REQUEST,
+            "Unsupported parameter: 'reasoning_effort' is not supported with this model."
+        ));
+        assert!(is_reasoning_unsupported(StatusCode::BAD_REQUEST, "this model does not support reasoning"));
+        // A 400 about something else, or a 500, must surface as the real error.
+        assert!(!is_reasoning_unsupported(StatusCode::BAD_REQUEST, "model 'nope' not found"));
+        assert!(!is_reasoning_unsupported(StatusCode::INTERNAL_SERVER_ERROR, "reasoning_effort"));
+    }
+
+    #[test]
+    fn reasoning_effort_rides_on_the_request_only_when_configured() {
+        let messages = [ChatMessage::user("hi")];
+        let with = ChatRequest {
+            model: "m",
+            messages: &messages,
+            temperature: 0.0,
+            max_tokens: 1,
+            tools: &[],
+            tool_choice: None,
+            reasoning_effort: Some("none"),
+        };
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["reasoning_effort"], "none");
+        let without = ChatRequest { reasoning_effort: None, ..with };
+        assert!(serde_json::to_value(&without).unwrap().get("reasoning_effort").is_none());
     }
 
     #[test]
