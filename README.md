@@ -158,6 +158,28 @@ cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```
 
+## Building a distributable
+
+```bash
+PATH=/usr/bin:$PATH npm run tauri build
+# → target/release/bundle/macos/TeachOnce.app
+# → target/release/bundle/dmg/TeachOnce_0.1.0_aarch64.dmg
+```
+
+The `PATH` prefix matters on a machine with pyenv or Homebrew: both ship a
+Python `xattr` that shadows Apple's, and the bundler's `xattr -cr` fails on it.
+The bundle is ad-hoc signed (`signingIdentity: "-"`), which is enough to run but
+not to pass Gatekeeper on another Mac: the recipient opens it once via System
+Settings → Privacy & Security → *Open Anyway*, or clears quarantine with
+`xattr -dr com.apple.quarantine /Applications/TeachOnce.app`. A Developer ID
+certificate plus notarization removes that step. `Info.plist` next to
+`tauri.conf.json` carries the microphone and Apple Events usage descriptions a
+packaged app needs; without them macOS denies both silently.
+
+Whisper weights and a model endpoint are not bundled: the other Mac needs
+Ollama (or any endpoint you configure) for analysis, and downloads the weights
+on first transcription.
+
 ## On disk
 
 ```

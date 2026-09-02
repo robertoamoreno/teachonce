@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the generated Info.plist by the Tauri bundler. Without these
+       keys macOS silently denies the microphone and Apple Events (the browser
+       URL read) to a packaged app; only an unbundled dev build gets prompts. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>TeachOnce records your narration only while you are recording and turns it into text on this Mac, unless you choose a hosted transcription service in Settings.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>TeachOnce asks your browser for the address of the active tab, so a recording knows which page you were on.</string>
+</dict>
+</plist>
