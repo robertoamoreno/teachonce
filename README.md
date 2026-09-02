@@ -2,7 +2,22 @@
 
 **Teach it once. Record yourself doing a task, answer a few questions about it, and hand your agent the skill.**
 
-By Roberto Moreno · [github.com/robertoamoreno/teachonce](https://github.com/robertoamoreno/teachonce)
+[![Latest release](https://img.shields.io/github/v/release/robertoamoreno/teachonce?label=download)](https://github.com/robertoamoreno/teachonce/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform: macOS 13+](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)
+![Built with Rust and Tauri](https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-orange)
+
+TeachOnce is a local-first macOS app that turns a recording of you doing a task
+into an **agent skill**: a `SKILL.md` that Claude Code, or any agent that reads
+skills, can run again. It records screen stills, app and window changes, browser
+URLs, clipboard copies and your narration; rebuilds the timeline on your Mac;
+interviews you about the parts a demonstration cannot show; and writes the skill
+with the model of your choice, local (Ollama, LM Studio, llama.cpp) or hosted
+(OpenAI, or anything OpenAI-compatible). An optional server takes uploads from
+several Macs and processes them in one place.
+
+**[Download the latest DMG](https://github.com/robertoamoreno/teachonce/releases/latest)** ·
+By Roberto Moreno
 
 TeachOnce began as a Rust + Tauri reimplementation of the idea behind
 [microsoft/skill-recorder](https://github.com/microsoft/skill-recorder), with one
@@ -214,7 +229,7 @@ app chose to send.
 ```bash
 PATH=/usr/bin:$PATH npm run tauri build
 # → target/release/bundle/macos/TeachOnce.app
-# → target/release/bundle/dmg/TeachOnce_0.2.1_aarch64.dmg
+# → target/release/bundle/dmg/TeachOnce_0.3.0_aarch64.dmg
 # add `-- --target universal-apple-darwin` for a DMG that also runs on Intel Macs
 ```
 
