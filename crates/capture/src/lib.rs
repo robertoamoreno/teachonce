@@ -24,5 +24,5 @@ pub mod window;
 
 pub use clipboard::ClipboardCollector;
 pub use collector::{Collector, CollectorContext, CollectorHost};
-pub use screen::ScreenCollector;
+pub use screen::{list_displays, DisplayInfo, ScreenCollector};
 pub use window::ActiveWindowCollector;

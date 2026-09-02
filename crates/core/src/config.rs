@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// the struct is that a user can turn a source *off* and it is then never
 /// constructed — so a disabled source costs nothing and, crucially on macOS,
 /// never triggers its permission prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CaptureConfig {
     /// Foreground app switches.
@@ -26,6 +26,11 @@ pub struct CaptureConfig {
     pub clipboard: bool,
     /// Periodic screen stills, kept only on change (needs Screen Recording).
     pub screen_frames: bool,
+    /// Which display the stills come from, by the name System Settings shows
+    /// ("Built-in Retina Display", "DELL U2723QE"). Empty means the primary
+    /// display. A name rather than a display id, because macOS hands out a
+    /// new id every time a monitor is plugged in.
+    pub display: String,
 }
 
 impl Default for CaptureConfig {
@@ -36,6 +41,7 @@ impl Default for CaptureConfig {
             browser_urls: true,
             clipboard: true,
             screen_frames: true,
+            display: String::new(),
         }
     }
 }
@@ -363,6 +369,8 @@ mod tests {
         assert_eq!(s.llm.model, "gpt-4o-mini");
         assert_eq!(s.llm.base_url, LlmConfig::default().base_url);
         assert!(s.capture.clipboard);
+        // The display picker came later still; no choice means the primary display.
+        assert_eq!(s.capture.display, "");
         // A settings file from before the field existed sends nothing.
         assert_eq!(s.llm.reasoning_effort_to_send(), None);
     }

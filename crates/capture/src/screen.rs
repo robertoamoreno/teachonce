@@ -12,12 +12,14 @@
 //! JPEGs. No encoder, no container, no decode step, no ffmpeg dependency — and a
 //! ten-minute recording lands in the low tens of frames instead of 600.
 
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, RgbaImage};
+use serde::Serialize;
 use skillrec_core::clock::{epoch_ms, to_at_ms};
 use skillrec_core::events::EventPayload;
 use skillrec_core::frames::{dhash, keep_reason, FrameManifest, FrameRecord};
@@ -77,19 +79,151 @@ pub fn encode_jpeg(image: &RgbaImage, max_width: u32, max_height: u32) -> Result
     Ok(out)
 }
 
-/// Grab the primary display.
-fn capture_primary() -> Result<RgbaImage> {
-    let monitors = xcap::Monitor::all().context("listing displays")?;
-    let monitor = monitors
+/// One attached display, as the Settings picker lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayInfo {
+    /// The id macOS uses for it right now. It changes on every replug, which
+    /// is why the settings store the name instead.
+    pub id: u32,
+    /// The name System Settings shows ("Built-in Retina Display",
+    /// "DELL U2723QE"), numbered when two displays share one.
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub is_primary: bool,
+}
+
+/// The attached displays, primary first.
+pub fn list_displays() -> Vec<DisplayInfo> {
+    match xcap::Monitor::all() {
+        Ok(monitors) => describe(&monitors).into_iter().map(|(info, _)| info).collect(),
+        Err(err) => {
+            tracing::warn!(%err, "could not list displays");
+            Vec::new()
+        }
+    }
+}
+
+/// Pair each monitor with its description, primary first. The name lookup
+/// goes through AppKit, so callers cache what this returns.
+fn describe(monitors: &[xcap::Monitor]) -> Vec<(DisplayInfo, &xcap::Monitor)> {
+    let raw: Vec<String> = monitors
         .iter()
-        .find(|m| m.is_primary().unwrap_or(false))
-        .or_else(|| monitors.first())
-        .context("no display is available to capture")?;
-    monitor.capture_image().context("capturing the screen")
+        .map(|m| m.friendly_name().or_else(|_| m.name()).unwrap_or_else(|_| "Display".to_string()))
+        .collect();
+    let mut described: Vec<(DisplayInfo, &xcap::Monitor)> = monitors
+        .iter()
+        .zip(unique_names(&raw))
+        .map(|(m, name)| {
+            let info = DisplayInfo {
+                id: m.id().unwrap_or(0),
+                name,
+                width: m.width().unwrap_or(0),
+                height: m.height().unwrap_or(0),
+                is_primary: m.is_primary().unwrap_or(false),
+            };
+            (info, m)
+        })
+        .collect();
+    described.sort_by_key(|(info, _)| !info.is_primary);
+    described
+}
+
+/// Two identical monitors report the same name. Number them so the setting
+/// can tell them apart: "DELL U2723QE (1)", "DELL U2723QE (2)".
+fn unique_names(raw: &[String]) -> Vec<String> {
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    raw.iter()
+        .map(|name| {
+            if raw.iter().filter(|other| *other == name).count() == 1 {
+                return name.clone();
+            }
+            let n = seen.entry(name.as_str()).or_insert(0);
+            *n += 1;
+            format!("{name} ({n})")
+        })
+        .collect()
+}
+
+/// Which display to grab: the one named, else the primary, else the first.
+/// The flag says the named display was missing and a stand-in was chosen.
+fn choose(displays: &[DisplayInfo], wanted: &str) -> Option<(usize, bool)> {
+    if !wanted.is_empty()
+        && let Some(index) = displays.iter().position(|d| d.name == wanted)
+    {
+        return Some((index, false));
+    }
+    let fallback = displays.iter().position(|d| d.is_primary).or((!displays.is_empty()).then_some(0))?;
+    Some((fallback, !wanted.is_empty()))
+}
+
+/// How many samples a stand-in display is used before the named one is looked
+/// for again — so a replugged monitor is picked back up within seconds,
+/// without an AppKit name lookup every second in between.
+const RELOOK_EVERY: u32 = 10;
+
+/// The display the stills come from: resolved lazily, remembered by id, and
+/// resolved again when the monitor it landed on goes away.
+struct DisplayTarget {
+    /// The configured name; empty means the primary display.
+    wanted: String,
+    id: Option<u32>,
+    standing_in: bool,
+    samples_since_lookup: u32,
+}
+
+impl DisplayTarget {
+    fn new(wanted: String) -> Self {
+        Self { wanted, id: None, standing_in: false, samples_since_lookup: 0 }
+    }
+
+    /// Grab one frame from the right display.
+    fn capture(&mut self) -> Result<RgbaImage> {
+        let monitors = xcap::Monitor::all().context("listing displays")?;
+        let monitor = self.pick(&monitors).context("no display is available to capture")?;
+        monitor.capture_image().context("capturing the screen")
+    }
+
+    fn pick<'a>(&mut self, monitors: &'a [xcap::Monitor]) -> Option<&'a xcap::Monitor> {
+        if self.wanted.is_empty() {
+            // The default never asks AppKit for a name.
+            return monitors
+                .iter()
+                .find(|m| m.is_primary().unwrap_or(false))
+                .or_else(|| monitors.first());
+        }
+        self.samples_since_lookup += 1;
+        let relook = self.standing_in && self.samples_since_lookup >= RELOOK_EVERY;
+        if !relook
+            && let Some(id) = self.id
+            && let Some(monitor) = monitors.iter().find(|m| m.id().ok() == Some(id))
+        {
+            return Some(monitor);
+        }
+        self.samples_since_lookup = 0;
+        let described = describe(monitors);
+        let infos: Vec<DisplayInfo> = described.iter().map(|(info, _)| info.clone()).collect();
+        let (index, standing_in) = choose(&infos, &self.wanted)?;
+        let (info, monitor) = &described[index];
+        if standing_in && !self.standing_in {
+            tracing::warn!(
+                wanted = %self.wanted,
+                instead = %info.name,
+                "the chosen display is not connected; recording the primary display instead"
+            );
+        } else if !standing_in && self.standing_in {
+            tracing::info!(display = %self.wanted, "the chosen display is back");
+        }
+        self.id = Some(info.id);
+        self.standing_in = standing_in;
+        Some(monitor)
+    }
 }
 
 /// Samples the screen and keeps only the frames that carry new information.
 pub struct ScreenCollector {
+    target: DisplayTarget,
     sequence: usize,
     last_hash: Option<String>,
     last_kept_epoch: i64,
@@ -105,8 +239,17 @@ impl Default for ScreenCollector {
 }
 
 impl ScreenCollector {
+    /// Record the primary display.
     pub fn new() -> Self {
+        Self::for_display(String::new())
+    }
+
+    /// Record the display with this name (see [`DisplayInfo::name`]); empty
+    /// means the primary display. A name that is not connected when sampling
+    /// starts falls back to the primary display, with a warning.
+    pub fn for_display(name: impl Into<String>) -> Self {
         Self {
+            target: DisplayTarget::new(name.into()),
             sequence: 0,
             last_hash: None,
             last_kept_epoch: 0,
@@ -118,7 +261,7 @@ impl ScreenCollector {
 
     /// Decide on one sample and, if it is worth keeping, write it.
     fn sample(&mut self, ctx: &CollectorContext, frames_dir: &Path) -> Result<()> {
-        let image = capture_primary()?;
+        let image = self.target.capture()?;
         let epoch = epoch_ms();
         let phash = dhash(&hash_thumbnail(&image));
 
@@ -220,6 +363,72 @@ mod tests {
             let value = ((x * 255 / width.max(1)) as u8).saturating_add(shade);
             image::Rgba([value, value, value, 255])
         })
+    }
+
+    fn display(name: &str, is_primary: bool) -> DisplayInfo {
+        DisplayInfo { id: 1, name: name.to_string(), width: 1920, height: 1080, is_primary }
+    }
+
+    #[test]
+    fn identical_monitors_get_numbered_names() {
+        let raw: Vec<String> =
+            ["Built-in Retina Display", "DELL U2723QE", "DELL U2723QE"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            unique_names(&raw),
+            vec!["Built-in Retina Display", "DELL U2723QE (1)", "DELL U2723QE (2)"]
+        );
+    }
+
+    #[test]
+    fn the_named_display_is_chosen_and_the_primary_stands_in_when_it_is_missing() {
+        let displays = vec![display("Built-in Retina Display", true), display("DELL U2723QE", false)];
+        // No choice: the primary, and nothing to warn about.
+        assert_eq!(choose(&displays, ""), Some((0, false)));
+        // A choice that is connected.
+        assert_eq!(choose(&displays, "DELL U2723QE"), Some((1, false)));
+        // A choice that is not: the primary, flagged so the collector can say so.
+        assert_eq!(choose(&displays, "LG HDR 4K"), Some((0, true)));
+        // No primary at all (a headless Mac): the first display.
+        let secondary_only = vec![display("DELL U2723QE", false)];
+        assert_eq!(choose(&secondary_only, "LG HDR 4K"), Some((0, true)));
+        assert_eq!(choose(&[], "LG HDR 4K"), None);
+    }
+
+    /// On a real Mac: `cargo test -p skillrec-capture -- --ignored displays`.
+    #[test]
+    #[ignore = "needs a display to enumerate"]
+    fn the_attached_displays_are_listed_primary_first() {
+        let displays = list_displays();
+        for d in &displays {
+            eprintln!("{} {}x{} primary={} id={}", d.name, d.width, d.height, d.is_primary, d.id);
+        }
+        assert!(!displays.is_empty());
+        assert!(displays[0].is_primary);
+        let names: std::collections::HashSet<&str> = displays.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names.len(), displays.len(), "names must be unique");
+    }
+
+    /// On a real Mac with Screen Recording granted to the test binary:
+    /// `cargo test -p skillrec-capture -- --ignored captured`.
+    #[test]
+    #[ignore = "needs a display and Screen Recording"]
+    fn the_named_display_is_the_one_captured_and_a_missing_one_falls_back() {
+        let aspect = |w: u32, h: u32| w as f64 / h as f64;
+        let displays = list_displays();
+        let primary = &displays[0];
+        // A display that is not the primary, when there is one.
+        if let Some(other) = displays.iter().find(|d| !d.is_primary) {
+            let image = DisplayTarget::new(other.name.clone()).capture().unwrap();
+            assert!(
+                (aspect(image.width(), image.height()) - aspect(other.width, other.height)).abs() < 0.02,
+                "{}x{} is not the shape of {}", image.width(), image.height(), other.name
+            );
+        }
+        // A display that is not connected: the primary stands in.
+        let mut target = DisplayTarget::new("No Such Display".to_string());
+        let image = target.capture().unwrap();
+        assert!(target.standing_in);
+        assert!((aspect(image.width(), image.height()) - aspect(primary.width, primary.height)).abs() < 0.02);
     }
 
     #[test]

@@ -174,6 +174,14 @@ export interface ServerInfo {
   sessions: number;
 }
 
+export interface DisplayInfo {
+  id: number;
+  name: string;
+  width: number;
+  height: number;
+  isPrimary: boolean;
+}
+
 export interface Settings {
   capture: {
     appActivity: boolean;
@@ -181,6 +189,8 @@ export interface Settings {
     browserUrls: boolean;
     clipboard: boolean;
     screenFrames: boolean;
+    /** Display name as macOS shows it; empty means the primary display. */
+    display: string;
   };
   llm: {
     baseUrl: string;
@@ -251,6 +261,7 @@ export const api = {
     invoke<MicrophoneState>("set_microphone", { on, device: device ?? null }),
   listMicrophones: () =>
     invoke<{ id: string; label: string; isDefault: boolean }[]>("list_microphones"),
+  listDisplays: () => invoke<DisplayInfo[]>("list_displays"),
 
   permissions: () => invoke<PermissionReport>("permission_report"),
   requestScreenRecording: () => invoke<boolean>("request_screen_recording"),

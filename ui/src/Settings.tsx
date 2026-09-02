@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, events, type AppInfo, type ConnectionTest, type ServerInfo, type Settings } from "./api";
+import { api, events, type AppInfo, type ConnectionTest, type DisplayInfo, type ServerInfo, type Settings } from "./api";
 import { isTauri, setServerKey } from "./transport";
 
 /** Open a link the way each host can: the opener plugin in the app, a tab in a browser. */
@@ -34,12 +34,14 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
   const [server, setServer] = useState<ServerInfo | null>(null);
   const [serverTest, setServerTest] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
+  const [displays, setDisplays] = useState<DisplayInfo[]>([]);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch((err) => onError(String(err)));
     api.whisperStatus().then(setWhisper).catch(() => undefined);
     api.appInfo().then(setAbout).catch(() => undefined);
     if (!isTauri) api.serverInfo().then(setServer).catch(() => undefined);
+    if (isTauri) api.listDisplays().then(setDisplays).catch(() => setDisplays([]));
     const unlisten = events.onDownload((p) => setDownload(p.fraction));
     return () => {
       unlisten.then((off) => off());
@@ -502,6 +504,30 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
             </span>
           </label>
         ))}
+        <label className="row">
+          <span className="label">Display</span>
+          <select
+            value={settings.capture.display}
+            disabled={busy || !settings.capture.screenFrames}
+            onChange={(e) => patch({ capture: { ...settings.capture, display: e.target.value } })}
+          >
+            <option value="">Primary display</option>
+            {displays.map((d) => (
+              <option key={d.id} value={d.name}>
+                {d.name} — {d.width}×{d.height}
+                {d.isPrimary ? ", primary" : ""}
+              </option>
+            ))}
+            {settings.capture.display && !displays.some((d) => d.name === settings.capture.display) && (
+              <option value={settings.capture.display}>{settings.capture.display} (not connected)</option>
+            )}
+          </select>
+        </label>
+        <p className="muted hint">
+          Stills come from one display. It is remembered by name, as System Settings shows it, so
+          the choice survives unplugging. If that display is missing when a recording starts, the
+          primary display stands in.
+        </p>
         <button
           className="ghost"
           disabled={busy}

@@ -126,6 +126,7 @@ pub fn run() {
             commands::toggle_recording,
             commands::set_microphone,
             commands::list_microphones,
+            commands::list_displays,
             commands::permission_report,
             commands::request_screen_recording,
             commands::list_sessions,

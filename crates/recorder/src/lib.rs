@@ -307,7 +307,7 @@ fn build_collectors(config: &CaptureConfig) -> Vec<Box<dyn Collector>> {
         collectors.push(Box::new(ClipboardCollector::new()));
     }
     if config.screen_frames {
-        collectors.push(Box::new(ScreenCollector::new()));
+        collectors.push(Box::new(ScreenCollector::for_display(config.display.clone())));
     }
     collectors
 }
@@ -503,6 +503,7 @@ mod tests {
             browser_urls: false,
             clipboard: false,
             screen_frames: false,
+            display: String::new(),
         };
         assert!(build_collectors(&config).is_empty());
 

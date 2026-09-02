@@ -336,7 +336,7 @@ async fn dispatch(state: &Arc<AppState>, command: &str, args: Value) -> Result<V
         }
 
         "start_recording" | "stop_recording" | "discard_recording" | "toggle_recording"
-        | "set_microphone" | "list_microphones" | "permission_report"
+        | "set_microphone" | "list_microphones" | "list_displays" | "permission_report"
         | "request_screen_recording" | "submit_session" | "test_server" => {
             anyhow::bail!("{command} runs only in the desktop app")
         }

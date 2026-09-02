@@ -79,7 +79,7 @@ their own threads at intervals chosen from what each signal costs:
 | App switches, window titles | 1000 ms (1600 ms in a browser) | Screen Recording |
 | Browser URL (AppleScript) | on change, ≥1500 ms apart | Automation, per browser |
 | Clipboard | 700 ms | none |
-| Screen stills | 1000 ms | Screen Recording |
+| Screen stills (one display, chosen in Settings) | 1000 ms | Screen Recording |
 | Microphone | continuous, toggleable | Microphone |
 
 **No video is recorded.** Screen stills are hashed with a difference hash and kept
@@ -87,6 +87,13 @@ only when the screen actually changed, or every 5 s as a heartbeat. A ten-minute
 recording is typically a few dozen JPEGs — no encoder, no container, no ffmpeg,
 and nothing to decode later. Every retained still is visible in the library, so
 you can see exactly what a model could be shown before you analyse.
+
+**One display.** Stills come from the primary display unless Settings → What to
+capture → Display names another. The choice is stored by the display's name as
+System Settings shows it, so it survives replugging and reboots (macOS hands out
+a new display id every time). If the chosen display is not connected when a
+recording starts, the primary display stands in and the log says so; the chosen
+one is picked back up within ten seconds of being plugged in.
 
 **2. Reconstruct** — on stop, the event stream is segmented into ordered steps
 (a new step when you change app, or change host inside a browser) and written as
@@ -192,7 +199,8 @@ app chose to send.
 ```bash
 PATH=/usr/bin:$PATH npm run tauri build
 # → target/release/bundle/macos/TeachOnce.app
-# → target/release/bundle/dmg/TeachOnce_0.1.0_aarch64.dmg
+# → target/release/bundle/dmg/TeachOnce_0.2.0_aarch64.dmg
+# add `-- --target universal-apple-darwin` for a DMG that also runs on Intel Macs
 ```
 
 The `PATH` prefix matters on a machine with pyenv or Homebrew: both ship a

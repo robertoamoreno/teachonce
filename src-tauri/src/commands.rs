@@ -39,7 +39,7 @@ pub async fn start_recording(
     device: Option<String>,
     state: State<'_, AppState>,
 ) -> Reply<String> {
-    let capture = state.settings.lock().await.capture;
+    let capture = state.settings.lock().await.capture.clone();
     let id = state.recorder.start(capture, narrate, device).await.map_err(fail)?;
     crate::emit_status(&app, &state.recorder.status().await);
     Ok(id)
@@ -71,7 +71,7 @@ pub async fn toggle_recording(app: AppHandle) -> Reply<bool> {
         let _ = app.emit("recorder://saved", &id);
         Ok(false)
     } else {
-        let capture = state.settings.lock().await.capture;
+        let capture = state.settings.lock().await.capture.clone();
         state.recorder.start(capture, false, None).await.map_err(fail)?;
         crate::emit_status(&app, &state.recorder.status().await);
         Ok(true)
@@ -93,6 +93,14 @@ pub async fn set_microphone(
 #[tauri::command]
 pub fn list_microphones() -> Vec<MicrophoneDevice> {
     skillrec_capture::audio::list_microphones()
+}
+
+/// Attached displays for the Settings picker. Sync on purpose: Tauri runs
+/// sync commands on the main thread, which is where AppKit wants to be asked
+/// for display names.
+#[tauri::command]
+pub fn list_displays() -> Vec<skillrec_capture::DisplayInfo> {
+    skillrec_capture::list_displays()
 }
 
 // --- Permissions -------------------------------------------------------------
