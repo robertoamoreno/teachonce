@@ -91,6 +91,15 @@ steps. It reads the timeline, then the narration, then events where something is
 unclear, and looks at frames *only* where events leave real ambiguity. You review
 it, edit it directly, or send natural-language feedback for another pass.
 
+**Debrief** — a recording shows one run of the happy path. Right after analysis
+a second pass asks you up to five questions it cannot answer from the evidence:
+what happens when a step fails, why you chose one option, what varies from run
+to run, what must already be true, how you know it is done, and what an
+unexplained specific is for. Answer in a sentence or skip. Your answers are
+stored with the analysis, survive a re-analysis, and the builder treats them as
+facts: exceptions become explicit handling, decisions become rules, variables
+become inputs.
+
 **5. Build** — two phases with you in between. The model proposes a plan: how it
 generalizes your single run, the fixed values it hard-codes (as `{{token}}`
 fields you can edit), and the ordered steps, each tagged `calculation` or
@@ -101,10 +110,10 @@ get a second say.
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     57 tests
+crates/core         events, session store, timeline, config     62 tests
 crates/capture      screen, window, clipboard, audio (macOS)    41 tests
 crates/narration    whisper.cpp transcription                    8 tests
-crates/agent        OpenAI-compatible client + agent loop      44 + 11 tests
+crates/agent        client, agent loop, describer, debrief     50 + 11 tests
 crates/recorder     the lifecycle state machine                  9 tests
 src-tauri           commands, tray, hotkey
 ui                  React 19
@@ -127,7 +136,7 @@ macOS will ask for Screen Recording on first capture, and for Automation the
 first time you record with a given browser in front.
 
 ```bash
-cargo test --workspace                              # 170 tests
+cargo test --workspace                              # 181 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```

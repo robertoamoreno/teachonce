@@ -15,6 +15,7 @@
 pub mod agent;
 pub mod builder;
 pub mod client;
+pub mod debrief;
 pub mod describer;
 pub mod instructions;
 pub mod session_data;
@@ -22,5 +23,6 @@ pub mod session_data;
 pub use agent::{AgentProgress, Tool, ToolOutput};
 pub use builder::{SkillBuilder, SkillTarget};
 pub use client::{ConnectionTest, LlmClient};
+pub use debrief::Debriefer;
 pub use describer::Describer;
 pub use session_data::SessionData;

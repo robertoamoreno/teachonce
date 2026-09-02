@@ -128,6 +128,8 @@ pub fn run() {
             commands::analyze_session,
             commands::revise_analysis,
             commands::edit_analysis,
+            commands::debrief_questions,
+            commands::answer_debrief,
             commands::plan_skill,
             commands::build_skill,
             commands::whisper_status,

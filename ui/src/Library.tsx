@@ -6,6 +6,7 @@ import {
   formatSpan,
   type Analysis,
   type AnalysisStep,
+  type DebriefReply,
   type FixedValue,
   type FrameRecord,
   type SessionDetail,
@@ -186,9 +187,18 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      await api.analyze(detail.summary.id);
-                      await load(detail.summary.id);
+                      const id = detail.summary.id;
+                      await api.analyze(id);
+                      await load(id);
                       onChanged();
+                      // The debrief is a second model pass. If it fails, the
+                      // analysis stands and the panel offers to ask again.
+                      try {
+                        await api.debriefQuestions(id);
+                        await load(id);
+                      } catch (err) {
+                        onError(String(err));
+                      }
                     })
                   }
                 >
@@ -263,6 +273,27 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                   </button>
                 </div>
               </div>
+            )}
+
+            {detail.analysis && !editing && (
+              <DebriefPanel
+                analysis={detail.analysis}
+                busy={busy}
+                onAsk={() =>
+                  run(async () => {
+                    const id = detail.summary.id;
+                    await api.debriefQuestions(id);
+                    await load(id);
+                  })
+                }
+                onSave={(answers) =>
+                  run(async () => {
+                    const id = detail.summary.id;
+                    await api.answerDebrief(id, answers);
+                    await load(id);
+                  })
+                }
+              />
             )}
 
             {detail.analysis && (
@@ -514,6 +545,158 @@ function AnalysisEditor({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The debrief: questions the recording could not answer, and the user's replies.
+ *
+ * Open questions get a box each; settled ones show as question and answer with
+ * a way to change the answer. Nothing is sent until Save, so a half-finished
+ * debrief costs nothing.
+ */
+function DebriefPanel({
+  analysis,
+  busy,
+  onAsk,
+  onSave,
+}: {
+  analysis: Analysis;
+  busy: boolean;
+  onAsk: () => void;
+  onSave: (answers: DebriefReply[]) => void;
+}) {
+  const open = analysis.debrief.filter((q) => !q.answer && !q.skipped);
+  const settled = analysis.debrief.filter((q) => q.answer || q.skipped);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [skips, setSkips] = useState<Record<string, boolean>>({});
+  const [changing, setChanging] = useState<Record<string, boolean>>({});
+
+  // A new round means new ids; drafts from the old one must not leak onto it.
+  const round = analysis.debrief.map((q) => `${q.id}:${q.answer ?? ""}:${q.skipped}`).join("|");
+  useEffect(() => {
+    setDrafts({});
+    setSkips({});
+    setChanging({});
+  }, [round]);
+
+  const replies = (): DebriefReply[] => {
+    const out: DebriefReply[] = [];
+    for (const q of open) {
+      const text = (drafts[q.id] ?? "").trim();
+      if (text) out.push({ id: q.id, answer: text, skipped: false });
+      else if (skips[q.id]) out.push({ id: q.id, answer: null, skipped: true });
+    }
+    for (const q of settled) {
+      if (!changing[q.id]) continue;
+      const text = (drafts[q.id] ?? "").trim();
+      if (text && text !== (q.answer ?? "")) out.push({ id: q.id, answer: text, skipped: false });
+    }
+    return out;
+  };
+  const pending = replies().length;
+
+  if (analysis.debrief.length === 0) {
+    return (
+      <div className="panel">
+        <h2>Debrief</h2>
+        <p className="muted">
+          The recording shows one run. A few questions about exceptions, decisions and what
+          varies are what make the skill work on every run.
+        </p>
+        <button className="ghost" disabled={busy} onClick={onAsk}>
+          Ask me about this recording
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel debrief">
+      <div className="panel-head">
+        <h2>
+          Debrief
+          {open.length > 0 && <span className="count-pill">{open.length} to answer</span>}
+        </h2>
+        <button className="ghost small" disabled={busy} onClick={onAsk}>
+          Ask more
+        </button>
+      </div>
+      {open.length > 0 && (
+        <p className="muted">
+          A sentence or two each, or skip. Your answers go into the skill as facts about the task.
+        </p>
+      )}
+      <ol className="questions">
+        {open.map((q) => (
+          <li key={q.id} className={`question ${skips[q.id] ? "skipped" : ""}`}>
+            <div className="q-head">
+              <span className={`kind ${q.kind}`}>{q.kind}</span>
+              <strong>{q.question}</strong>
+            </div>
+            {q.why && (
+              <small className="muted why">
+                {q.why}
+                {q.stepId ? ` · ${q.stepId}` : ""}
+              </small>
+            )}
+            <textarea
+              placeholder="Your answer"
+              value={drafts[q.id] ?? ""}
+              disabled={busy || !!skips[q.id]}
+              onChange={(e) => setDrafts({ ...drafts, [q.id]: e.target.value })}
+            />
+            <label className="skip">
+              <input
+                type="checkbox"
+                checked={!!skips[q.id]}
+                disabled={busy}
+                onChange={(e) => setSkips({ ...skips, [q.id]: e.target.checked })}
+              />
+              Skip this one
+            </label>
+          </li>
+        ))}
+        {settled.map((q) => (
+          <li key={q.id} className="question settled">
+            <div className="q-head">
+              <span className={`kind ${q.kind}`}>{q.kind}</span>
+              <strong>{q.question}</strong>
+            </div>
+            {changing[q.id] ? (
+              <textarea
+                value={drafts[q.id] ?? q.answer ?? ""}
+                disabled={busy}
+                onChange={(e) => setDrafts({ ...drafts, [q.id]: e.target.value })}
+              />
+            ) : (
+              <p className={q.answer ? "answer" : "answer muted"}>{q.answer ?? "Skipped"}</p>
+            )}
+            {!changing[q.id] && (
+              <div>
+                <button
+                  className="ghost small"
+                  disabled={busy}
+                  onClick={() => {
+                    setChanging({ ...changing, [q.id]: true });
+                    setDrafts({ ...drafts, [q.id]: q.answer ?? "" });
+                  }}
+                >
+                  {q.answer ? "Change" : "Answer"}
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+      {pending > 0 && (
+        <div className="actions">
+          <button disabled={busy} onClick={() => onSave(replies())}>
+            Save {pending} {pending === 1 ? "answer" : "answers"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

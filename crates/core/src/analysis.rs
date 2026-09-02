@@ -48,6 +48,112 @@ pub struct AnalysisStep {
     pub confidence: Confidence,
 }
 
+/// What a debrief question is probing for.
+///
+/// Coarse on purpose: it labels the question in the UI and tells the builder
+/// which part of the skill an answer belongs to. The kinds come from what
+/// process interviewers and programming-by-demonstration systems have found
+/// worth asking: conditionals, parameters, and the specifics nobody explains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestionKind {
+    /// What happens off the happy path: a failure, a missing item, an odd case.
+    #[default]
+    Exception,
+    /// Why one option was chosen over another, and what would change that.
+    Decision,
+    /// What differs from run to run: the inputs a skill must ask for or find.
+    Variable,
+    /// What must already be true: access, setup, an open file.
+    Precondition,
+    /// How the user knows the task is done, and what the result must look like.
+    Outcome,
+    /// An environment-specific fact an agent would get wrong without being told.
+    Gotcha,
+}
+
+impl QuestionKind {
+    /// Parse loosely. Models spell these many ways, and a misfiled question is
+    /// still worth asking, so anything unrecognised lands on `Exception`.
+    pub fn parse(raw: &str) -> Self {
+        let raw = raw.trim().to_lowercase();
+        let starts = |prefixes: &[&str]| prefixes.iter().any(|p| raw.starts_with(p));
+        if starts(&["decision", "choice", "why", "judg"]) {
+            Self::Decision
+        } else if starts(&["var", "input", "param", "argument"]) {
+            Self::Variable
+        } else if starts(&["pre", "setup", "access", "require"]) {
+            Self::Precondition
+        } else if starts(&["out", "done", "result", "success", "complet"]) {
+            Self::Outcome
+        } else if starts(&["gotcha", "quirk", "caveat", "specific"]) {
+            Self::Gotcha
+        } else {
+            Self::Exception
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Exception => "exception",
+            Self::Decision => "decision",
+            Self::Variable => "variable",
+            Self::Precondition => "precondition",
+            Self::Outcome => "outcome",
+            Self::Gotcha => "gotcha",
+        }
+    }
+}
+
+/// One debrief question and, once the user has replied, its answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebriefQuestion {
+    /// `q1`, `q2`, … assigned when the set is stored.
+    #[serde(default)]
+    pub id: String,
+    pub question: String,
+    /// What in the recording prompted it, so the user can see it is not generic.
+    #[serde(default)]
+    pub why: String,
+    #[serde(default)]
+    pub kind: QuestionKind,
+    /// The analysis step it is about, when it is about one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// The user chose not to answer. It stays on record and is not asked again.
+    #[serde(default)]
+    pub skipped: bool,
+}
+
+impl DebriefQuestion {
+    pub fn is_answered(&self) -> bool {
+        self.answer.as_deref().is_some_and(|a| !a.trim().is_empty())
+    }
+
+    /// Still waiting on the user.
+    pub fn is_open(&self) -> bool {
+        !self.is_answered() && !self.skipped
+    }
+}
+
+/// Ceiling on one round of questions. Five is what a person will answer in one
+/// sitting; past that the debrief becomes a form nobody fills in.
+pub const MAX_DEBRIEF_QUESTIONS: usize = 5;
+
+/// One reply from the user, by question id.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebriefAnswer {
+    pub id: String,
+    #[serde(default)]
+    pub answer: Option<String>,
+    #[serde(default)]
+    pub skipped: bool,
+}
+
 /// One round of user feedback, kept so the conversation is reconstructible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +186,11 @@ pub struct Analysis {
     /// distinguishable from an edit.
     #[serde(default)]
     pub model: String,
+    /// The debrief: questions the recording could not answer, and what the
+    /// user said. This is the decision layer a demonstration lacks, and the
+    /// builder treats the answers as facts about the task.
+    #[serde(default)]
+    pub debrief: Vec<DebriefQuestion>,
 }
 
 /// What the model sends to the `submit_analysis` tool, before we attach
@@ -129,7 +240,76 @@ impl Analysis {
             revision: previous.map(|p| p.revision + 1).unwrap_or(1),
             feedback_log: previous.map(|p| p.feedback_log.clone()).unwrap_or_default(),
             model: model.to_string(),
+            // The user's answers are knowledge about the task, not about one
+            // model's reading of it. They survive a re-analysis.
+            debrief: previous.map(|p| p.debrief.clone()).unwrap_or_default(),
         }
+    }
+
+    /// Replace the open questions with a fresh round, keeping everything the
+    /// user already answered or skipped. At most [`MAX_DEBRIEF_QUESTIONS`] new
+    /// ones are taken; ids are reassigned densely. Returns how many were added.
+    pub fn set_open_questions(&mut self, fresh: Vec<DebriefQuestion>) -> usize {
+        let mut kept: Vec<DebriefQuestion> =
+            self.debrief.drain(..).filter(|q| !q.is_open()).collect();
+        let mut added = 0;
+        for mut question in fresh {
+            question.question = question.question.trim().to_string();
+            question.why = question.why.trim().to_string();
+            question.step_id = question.step_id.filter(|s| !s.trim().is_empty());
+            if question.question.is_empty() {
+                continue;
+            }
+            // A question the user has already dealt with is not asked twice.
+            if kept.iter().any(|k| k.question.eq_ignore_ascii_case(&question.question)) {
+                continue;
+            }
+            question.answer = None;
+            question.skipped = false;
+            kept.push(question);
+            added += 1;
+            if added == MAX_DEBRIEF_QUESTIONS {
+                break;
+            }
+        }
+        for (index, question) in kept.iter_mut().enumerate() {
+            question.id = format!("q{}", index + 1);
+        }
+        self.debrief = kept;
+        added
+    }
+
+    /// Record the user's replies. Advances the revision when anything changed:
+    /// the answers are part of what the builder works from.
+    pub fn answer_debrief(&mut self, answers: &[DebriefAnswer]) -> usize {
+        let mut changed = 0;
+        for reply in answers {
+            let Some(question) = self.debrief.iter_mut().find(|q| q.id == reply.id) else {
+                continue;
+            };
+            let answer = reply
+                .answer
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string);
+            // An answer beats a skip: if the user wrote something, keep it.
+            let skipped = reply.skipped && answer.is_none();
+            if question.answer != answer || question.skipped != skipped {
+                question.answer = answer;
+                question.skipped = skipped;
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.revision += 1;
+        }
+        changed
+    }
+
+    /// Questions still waiting on the user.
+    pub fn open_questions(&self) -> usize {
+        self.debrief.iter().filter(|q| q.is_open()).count()
     }
 
     /// Apply a direct user edit. Not a re-analysis: the model is not involved, so
@@ -176,6 +356,30 @@ impl Analysis {
             }
             if !step.apps.is_empty() {
                 out.push_str(&format!("   _apps: {}_\n", step.apps.join(", ")));
+            }
+        }
+
+        let answered: Vec<&DebriefQuestion> =
+            self.debrief.iter().filter(|q| q.is_answered()).collect();
+        if !answered.is_empty() {
+            out.push_str(
+                "\n## Debrief\n\nThe user answered these questions about the recording. Treat \
+                 the answers as authoritative: they are the exceptions, decisions and inputs \
+                 the recording alone could not show.\n\n",
+            );
+            for question in answered {
+                let about = question
+                    .step_id
+                    .as_deref()
+                    .map(|s| format!(", about {s}"))
+                    .unwrap_or_default();
+                out.push_str(&format!(
+                    "- ({}{}) {}\n  Answer: {}\n",
+                    question.kind.label(),
+                    about,
+                    question.question,
+                    question.answer.as_deref().unwrap_or_default()
+                ));
             }
         }
         out
@@ -264,6 +468,120 @@ mod tests {
         let blank = AnalysisSubmission { title: "   ".into(), ..submission() };
         let a = Analysis::from_submission("sess", "m", None, blank);
         assert_eq!(a.title, "Research and compare articles on");
+    }
+
+    fn question(text: &str, kind: QuestionKind) -> DebriefQuestion {
+        DebriefQuestion {
+            id: String::new(),
+            question: text.into(),
+            why: "seen in s1".into(),
+            kind,
+            step_id: Some("s1".into()),
+            answer: None,
+            skipped: false,
+        }
+    }
+
+    #[test]
+    fn a_round_of_questions_is_capped_numbered_and_deduplicated() {
+        let mut a = Analysis::from_submission("sess", "m", None, submission());
+        let fresh: Vec<DebriefQuestion> = (1..=7)
+            .map(|i| question(&format!("Question {i}?"), QuestionKind::Exception))
+            .chain([question("   ", QuestionKind::Decision)])
+            .collect();
+        assert_eq!(a.set_open_questions(fresh), MAX_DEBRIEF_QUESTIONS);
+        assert_eq!(a.debrief.len(), MAX_DEBRIEF_QUESTIONS);
+        assert_eq!(a.debrief[0].id, "q1");
+        assert_eq!(a.debrief[4].id, "q5");
+        assert_eq!(a.open_questions(), 5);
+        // Generating questions is not a user edit, so the revision holds.
+        assert_eq!(a.revision, 1);
+    }
+
+    #[test]
+    fn answers_are_kept_across_a_new_round_and_a_re_analysis() {
+        let mut a = Analysis::from_submission("sess", "m", None, submission());
+        a.set_open_questions(vec![
+            question("What if the page is empty?", QuestionKind::Exception),
+            question("Why that guide first?", QuestionKind::Decision),
+        ]);
+        let changed = a.answer_debrief(&[
+            DebriefAnswer { id: "q1".into(), answer: Some("  I stop and report it. ".into()), skipped: false },
+            DebriefAnswer { id: "nope".into(), answer: Some("ignored".into()), skipped: false },
+        ]);
+        assert_eq!(changed, 1);
+        assert_eq!(a.revision, 2, "an answer is part of the analysis");
+        assert_eq!(a.debrief[0].answer.as_deref(), Some("I stop and report it."));
+        assert_eq!(a.open_questions(), 1);
+
+        // A fresh round replaces only the open question; the answered one and
+        // an exact repeat of it are both left alone.
+        let added = a.set_open_questions(vec![
+            question("what if the page is empty?", QuestionKind::Exception),
+            question("Which browser must be open?", QuestionKind::Precondition),
+        ]);
+        assert_eq!(added, 1);
+        assert_eq!(a.debrief.len(), 2);
+        assert!(a.debrief[0].is_answered());
+        assert_eq!(a.debrief[1].question, "Which browser must be open?");
+        assert_eq!(a.debrief[1].id, "q2");
+
+        // Re-analysis keeps the debrief, like the feedback log.
+        let again = Analysis::from_submission("sess", "m", Some(&a), submission());
+        assert_eq!(again.debrief.len(), 2);
+        assert!(again.debrief[0].is_answered());
+    }
+
+    #[test]
+    fn a_skip_is_recorded_unless_the_user_also_wrote_an_answer() {
+        let mut a = Analysis::from_submission("sess", "m", None, submission());
+        a.set_open_questions(vec![
+            question("A?", QuestionKind::Outcome),
+            question("B?", QuestionKind::Gotcha),
+        ]);
+        a.answer_debrief(&[
+            DebriefAnswer { id: "q1".into(), answer: None, skipped: true },
+            DebriefAnswer { id: "q2".into(), answer: Some("both".into()), skipped: true },
+        ]);
+        assert!(a.debrief[0].skipped && !a.debrief[0].is_open());
+        assert!(a.debrief[1].is_answered() && !a.debrief[1].skipped);
+        assert_eq!(a.open_questions(), 0);
+        // Answering again with the same content changes nothing.
+        let before = a.revision;
+        assert_eq!(a.answer_debrief(&[DebriefAnswer { id: "q2".into(), answer: Some(" both ".into()), skipped: false }]), 0);
+        assert_eq!(a.revision, before);
+    }
+
+    #[test]
+    fn only_answered_questions_reach_the_builder() {
+        let mut a = Analysis::from_submission("sess", "m", None, submission());
+        a.set_open_questions(vec![
+            question("What if the search returns nothing?", QuestionKind::Exception),
+            question("Unanswered?", QuestionKind::Variable),
+        ]);
+        assert!(!a.render().contains("## Debrief"), "no answers, no section");
+        a.answer_debrief(&[DebriefAnswer { id: "q1".into(), answer: Some("Try the archive.".into()), skipped: false }]);
+        let rendered = a.render();
+        assert!(rendered.contains("## Debrief"));
+        assert!(rendered.contains("(exception, about s1) What if the search returns nothing?"));
+        assert!(rendered.contains("Answer: Try the archive."));
+        assert!(!rendered.contains("Unanswered?"));
+    }
+
+    #[test]
+    fn question_kinds_parse_the_ways_models_spell_them() {
+        assert_eq!(QuestionKind::parse("Decision"), QuestionKind::Decision);
+        assert_eq!(QuestionKind::parse("why"), QuestionKind::Decision);
+        assert_eq!(QuestionKind::parse("variable"), QuestionKind::Variable);
+        assert_eq!(QuestionKind::parse("inputs"), QuestionKind::Variable);
+        assert_eq!(QuestionKind::parse("pre-condition"), QuestionKind::Precondition);
+        assert_eq!(QuestionKind::parse("outcome"), QuestionKind::Outcome);
+        assert_eq!(QuestionKind::parse("Done criteria"), QuestionKind::Outcome);
+        assert_eq!(QuestionKind::parse("gotcha"), QuestionKind::Gotcha);
+        assert_eq!(QuestionKind::parse("edge case"), QuestionKind::Exception);
+        assert_eq!(QuestionKind::parse(""), QuestionKind::Exception);
+        // The on-disk spelling is the label.
+        assert_eq!(serde_json::to_string(&QuestionKind::Gotcha).unwrap(), "\"gotcha\"");
     }
 
     #[test]

@@ -23,9 +23,11 @@ const MAX_FRAMES_PER_CALL: usize = 6;
 /// Cap on events returned by one `get_events` call.
 const MAX_EVENTS_PER_CALL: usize = 120;
 
-type Shared = Arc<SessionData>;
+pub(crate) type Shared = Arc<SessionData>;
 
-struct GetTimeline(Shared);
+/// The read tools are shared with the debrief, which asks about the same
+/// evidence the describer reconstructed from.
+pub(crate) struct GetTimeline(pub(crate) Shared);
 
 #[async_trait::async_trait]
 impl Tool for GetTimeline {
@@ -47,7 +49,7 @@ impl Tool for GetTimeline {
     }
 }
 
-struct GetNarration(Shared);
+pub(crate) struct GetNarration(pub(crate) Shared);
 
 #[async_trait::async_trait]
 impl Tool for GetNarration {
@@ -86,7 +88,7 @@ impl Tool for GetNarration {
     }
 }
 
-struct GetEvents(Shared);
+pub(crate) struct GetEvents(pub(crate) Shared);
 
 #[async_trait::async_trait]
 impl Tool for GetEvents {

@@ -23,7 +23,8 @@ use crate::session_data::SessionData;
 
 type Shared = Arc<SessionData>;
 
-struct GetAnalysis(Shared);
+/// Also the debrief's first read: it asks about the analysis the user approved.
+pub(crate) struct GetAnalysis(pub(crate) Shared);
 
 #[async_trait::async_trait]
 impl Tool for GetAnalysis {

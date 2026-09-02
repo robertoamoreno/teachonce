@@ -6,10 +6,10 @@
 //! problem, where "analysis failed" leaves them guessing.
 
 use serde::Serialize;
-use skillrec_agent::{Describer, SessionData, SkillBuilder, SkillTarget};
+use skillrec_agent::{Debriefer, Describer, SessionData, SkillBuilder, SkillTarget};
 use skillrec_capture::audio::MicrophoneDevice;
 use skillrec_capture::permissions::{self, PermissionReport};
-use skillrec_core::analysis::{Analysis, AnalysisStep};
+use skillrec_core::analysis::{Analysis, AnalysisStep, DebriefAnswer};
 use skillrec_core::config::{Settings, WhisperModel};
 use skillrec_core::session::{set_session_title, write_json, SessionSummary};
 use skillrec_core::skill::{BuiltSkill, FixedValue, SkillPlan};
@@ -267,6 +267,44 @@ pub fn edit_analysis(
     if let Err(err) = set_session_title(&dir, Some(&analysis.title)) {
         tracing::warn!("could not update the recording's title: {err:#}");
     }
+    Ok(analysis)
+}
+
+// --- Debrief -----------------------------------------------------------------
+
+/// Ask up to five questions the recording cannot answer, and store them on the
+/// analysis as open questions. Anything the user already answered is kept.
+#[tauri::command]
+pub async fn debrief_questions(
+    app: AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Reply<Analysis> {
+    let dir = skillrec_core::paths::session_dir(&id).map_err(fail)?;
+    let config = state.settings.lock().await.llm.clone();
+    let data = SessionData::load(&dir).map_err(fail)?;
+    let questions = Debriefer::new(config)
+        .ask(data, &progress_sink(&app))
+        .await
+        .map_err(fail)?;
+
+    // Re-read rather than reuse the loaded copy: the user may have answered
+    // or edited while the model was thinking.
+    let mut analysis: Analysis = skillrec_core::session::read_json(&dir.join("analysis.json"))
+        .ok_or("analyse this recording before debriefing it")?;
+    analysis.set_open_questions(questions);
+    write_json(&dir.join("analysis.json"), &analysis).map_err(fail)?;
+    Ok(analysis)
+}
+
+/// Record the user's answers (or skips). The model is not involved.
+#[tauri::command]
+pub fn answer_debrief(id: String, answers: Vec<DebriefAnswer>) -> Reply<Analysis> {
+    let dir = skillrec_core::paths::session_dir(&id).map_err(fail)?;
+    let mut analysis: Analysis = skillrec_core::session::read_json(&dir.join("analysis.json"))
+        .ok_or("there is no analysis to answer for yet")?;
+    analysis.answer_debrief(&answers);
+    write_json(&dir.join("analysis.json"), &analysis).map_err(fail)?;
     Ok(analysis)
 }
 

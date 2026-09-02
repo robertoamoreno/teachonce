@@ -50,6 +50,32 @@ export interface AnalysisStep {
   confidence: Confidence;
 }
 
+export type QuestionKind =
+  | "exception"
+  | "decision"
+  | "variable"
+  | "precondition"
+  | "outcome"
+  | "gotcha";
+
+/** A question the recording could not answer, and the user's reply once given. */
+export interface DebriefQuestion {
+  id: string;
+  question: string;
+  why: string;
+  kind: QuestionKind;
+  stepId?: string | null;
+  answer?: string | null;
+  skipped: boolean;
+}
+
+/** One reply, by question id. A skip with an answer counts as an answer. */
+export interface DebriefReply {
+  id: string;
+  answer: string | null;
+  skipped: boolean;
+}
+
 export interface Analysis {
   sessionId: string;
   title: string;
@@ -59,6 +85,7 @@ export interface Analysis {
   steps: AnalysisStep[];
   revision: number;
   model: string;
+  debrief: DebriefQuestion[];
 }
 
 export interface FixedValue {
@@ -196,6 +223,9 @@ export const api = {
     invoke<Analysis>("revise_analysis", { id, feedback }),
   editAnalysis: (id: string, patch: { title?: string; intent?: string; steps?: AnalysisStep[] }) =>
     invoke<Analysis>("edit_analysis", { id, ...patch }),
+  debriefQuestions: (id: string) => invoke<Analysis>("debrief_questions", { id }),
+  answerDebrief: (id: string, answers: DebriefReply[]) =>
+    invoke<Analysis>("answer_debrief", { id, answers }),
 
   planSkill: (id: string, feedback?: string) =>
     invoke<SkillPlan>("plan_skill", { id, feedback: feedback ?? null }),
