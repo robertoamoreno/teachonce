@@ -195,7 +195,8 @@ export interface AppInfo {
   identifier: string;
   dataDir: string;
   skillsDir: string;
-  website: string;
+  author: string;
+  repository: string;
   license: string;
 }
 

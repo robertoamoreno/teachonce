@@ -256,7 +256,9 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
       <div className="panel about">
         <h2>About {about?.name ?? "TeachOnce"}</h2>
         <p className="muted">
-          {about ? `Version ${about.version} · ${about.identifier} · ${about.license}` : "Loading…"}
+          {about
+            ? `Version ${about.version} · ${about.identifier} · ${about.license} · by ${about.author}`
+            : "Loading…"}
         </p>
         <p>
           Record yourself doing a task once, answer a few questions about it, and hand your agent
@@ -289,10 +291,12 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
           <button
             className="ghost"
             onClick={() =>
-              openUrl(about?.website ?? "https://teachonce.ai").catch((err) => onError(String(err)))
+              openUrl(about?.repository ?? "https://github.com/robertoamoreno/teachonce").catch(
+                (err) => onError(String(err)),
+              )
             }
           >
-            teachonce.ai
+            Source on GitHub
           </button>
         </div>
       </div>

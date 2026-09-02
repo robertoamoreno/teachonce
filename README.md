@@ -2,6 +2,8 @@
 
 **Teach it once. Record yourself doing a task, answer a few questions about it, and hand your agent the skill.**
 
+By Roberto Moreno · [github.com/robertoamoreno/teachonce](https://github.com/robertoamoreno/teachonce)
+
 TeachOnce began as a Rust + Tauri reimplementation of the idea behind
 [microsoft/skill-recorder](https://github.com/microsoft/skill-recorder), with one
 structural change: **everything runs locally except the analysis step, and that
@@ -176,4 +178,4 @@ and a 120-character preview — but a screen still captures whatever was on scre
 
 ## License
 
-MIT.
+MIT © 2026 Roberto Moreno. See [LICENSE](LICENSE).

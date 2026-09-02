@@ -28,6 +28,8 @@
     "active": true,
     "targets": ["dmg", "app"],
     "icon": ["icons/icon.png"],
+    "publisher": "Roberto Moreno",
+    "copyright": "© 2026 Roberto Moreno",
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

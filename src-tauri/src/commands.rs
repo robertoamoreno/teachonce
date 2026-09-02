@@ -386,7 +386,8 @@ pub struct AppInfo {
     pub identifier: String,
     pub data_dir: String,
     pub skills_dir: String,
-    pub website: String,
+    pub author: String,
+    pub repository: String,
     pub license: String,
 }
 
@@ -399,7 +400,8 @@ pub fn app_info(app: AppHandle) -> Reply<AppInfo> {
         identifier: app.config().identifier.clone(),
         data_dir: skillrec_core::paths::data_root().map_err(fail)?.display().to_string(),
         skills_dir: skillrec_core::paths::skills_root().map_err(fail)?.display().to_string(),
-        website: "https://teachonce.ai".into(),
+        author: "Roberto Moreno".into(),
+        repository: "https://github.com/robertoamoreno/teachonce".into(),
         license: "MIT".into(),
     })
 }

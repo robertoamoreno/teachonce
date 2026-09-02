@@ -7,6 +7,9 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.90"
+authors = ["Roberto Moreno"]
+repository = "https://github.com/robertoamoreno/teachonce"
+homepage = "https://github.com/robertoamoreno/teachonce"
 
 [workspace.dependencies]
 skillrec-core = { path = "crates/core" }

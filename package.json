@@ -23,5 +23,11 @@
     "@vitejs/plugin-react": "^5",
     "typescript": "^5.7",
     "vite": "^7"
+  },
+  "author": "Roberto Moreno",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertoamoreno/teachonce"
   }
 }
