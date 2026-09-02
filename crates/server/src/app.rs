@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::state::AppState;
-use crate::{assets, auth, rpc, upload};
+use crate::{assets, auth, download, rpc, upload};
 
 /// A recording with 600 stills and a long narration is a few hundred MB.
 const UPLOAD_LIMIT: usize = 2 * 1024 * 1024 * 1024;
@@ -25,6 +25,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(upload::handle).layer(DefaultBodyLimit::max(UPLOAD_LIMIT)),
         )
         .route("/api/events", get(events))
+        .route("/api/sessions/{id}/skill.zip", get(download::skill))
         .route_layer(middleware::from_fn_with_state(Arc::clone(&state), auth::require_key));
 
     Router::new()
@@ -129,6 +130,41 @@ mod tests {
             .unwrap();
         assert_eq!(desktop_only.status(), StatusCode::BAD_REQUEST);
         assert!(text(desktop_only).await.contains("desktop app"));
+    }
+
+    #[tokio::test]
+    async fn a_built_skill_downloads_as_a_zip_and_a_missing_one_is_a_404() {
+        let state = state();
+        let sessions = state.data_dir.join("sessions");
+        std::fs::create_dir_all(sessions.join("20260901-000000-rt000001")).unwrap();
+        std::fs::create_dir_all(sessions.join("20260901-000000-rt000002")).unwrap();
+        let skill = skillrec_core::skill::BuiltSkill {
+            name: "file-expenses".into(),
+            body: "Do it.".into(),
+            ..Default::default()
+        };
+        skillrec_core::session::write_json(&sessions.join("20260901-000000-rt000001/skill.json"), &skill).unwrap();
+        let app = router(state);
+
+        let get = |path: &str, key: Option<&str>| {
+            let mut req = Request::builder().method("GET").uri(path);
+            if let Some(key) = key {
+                req = req.header("authorization", format!("Bearer {key}"));
+            }
+            req.body(axum::body::Body::empty()).unwrap()
+        };
+        let no_key = app.clone().oneshot(get("/api/sessions/20260901-000000-rt000001/skill.zip", None)).await.unwrap();
+        assert_eq!(no_key.status(), StatusCode::UNAUTHORIZED);
+
+        let ok = app.clone().oneshot(get("/api/sessions/20260901-000000-rt000001/skill.zip", Some("tk_test"))).await.unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(ok.headers()["content-type"], "application/zip");
+        assert_eq!(ok.headers()["content-disposition"], "attachment; filename=\"file-expenses.zip\"");
+        let bytes = ok.into_body().collect().await.unwrap().to_bytes();
+        assert!(bytes.starts_with(b"PK"), "a zip archive");
+
+        let none = app.oneshot(get("/api/sessions/20260901-000000-rt000002/skill.zip", Some("tk_test"))).await.unwrap();
+        assert_eq!(none.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

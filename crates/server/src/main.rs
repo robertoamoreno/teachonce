@@ -15,6 +15,7 @@ mod app;
 mod assets;
 mod auth;
 mod config;
+mod download;
 mod jobs;
 mod rpc;
 mod state;

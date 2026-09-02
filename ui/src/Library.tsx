@@ -515,6 +515,20 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                 <h2>Skill: {detail.skill.name}</h2>
                 <p className="muted">{detail.skill.description}</p>
                 <pre className="skill-body">{detail.skill.body}</pre>
+                {!isTauri && (
+                  <div className="actions">
+                    <button
+                      className="ghost"
+                      disabled={busy}
+                      onClick={() => run(async () => api.downloadSkill(detail.summary.id, detail.skill!.name))}
+                    >
+                      Download skill
+                    </button>
+                    <span className="muted">
+                      A zip holding {detail.skill.name}/SKILL.md. Unpack it into ~/.claude/skills to install it.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 

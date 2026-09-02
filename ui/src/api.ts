@@ -5,7 +5,7 @@
  * frontend has is exactly this file — there is no ambient `invoke` scattered
  * through components.
  */
-import { call as invoke, listen } from "./transport";
+import { call as invoke, download, listen } from "./transport";
 
 export type MicrophoneState =
   | { state: "off" }
@@ -262,6 +262,9 @@ export const api = {
   listMicrophones: () =>
     invoke<{ id: string; label: string; isDefault: boolean }[]>("list_microphones"),
   listDisplays: () => invoke<DisplayInfo[]>("list_displays"),
+  /** Browser only: the built skill as `<name>/SKILL.md` in a zip. */
+  downloadSkill: (id: string, name: string) =>
+    download(`/api/sessions/${encodeURIComponent(id)}/skill.zip`, `${name}.zip`),
 
   permissions: () => invoke<PermissionReport>("permission_report"),
   requestScreenRecording: () => invoke<boolean>("request_screen_recording"),

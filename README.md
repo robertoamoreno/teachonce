@@ -143,7 +143,7 @@ crates/capture      screen, window, clipboard, audio (macOS)    43 tests
 crates/narration    whisper.cpp + hosted transcription          15 tests
 crates/agent        client, agent loop, describer, debrief     53 + 14 tests
 crates/recorder     the lifecycle state machine                  9 tests
-crates/server       HTTP API, upload, pipeline, embedded UI      7 tests
+crates/server       HTTP API, upload, pipeline, embedded UI      9 tests
 src-tauri           commands, tray, hotkey, server submit        3 tests (one against a live server, ignored by default)
 ui                  React 19
 ```
@@ -191,8 +191,10 @@ browser, the server asks for the key once and keeps it in that browser; Settings
 → Server shows it and can rotate it.
 
 The API is the app's command surface: `POST /api/rpc/<command>` with a JSON
-body, `POST /api/sessions/upload` with a zip, and `GET /api/events` for
-server-sent progress, all behind `Authorization: Bearer <key>`. It is plain
+body, `POST /api/sessions/upload` with a zip, `GET /api/sessions/<id>/skill.zip`
+for a built skill as `<name>/SKILL.md` (the browser's **Download skill** button),
+and `GET /api/events` for server-sent progress, all behind
+`Authorization: Bearer <key>`. It is plain
 HTTP: keep it on a trusted network or put it behind a TLS reverse proxy before
 exposing it further. The server never records anything; it only receives what an
 app chose to send.

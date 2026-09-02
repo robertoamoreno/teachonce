@@ -87,6 +87,22 @@ export async function listen<T>(
   };
 }
 
+/** Fetch a file from the server with the key and hand it to the browser to save. Browser-only. */
+export async function download(path: string, filename: string): Promise<void> {
+  const response = await fetch(path, { headers: { Authorization: `Bearer ${serverKey()}` } });
+  if (!response.ok) {
+    throw new Error((await response.text()) || `The server answered ${response.status}.`);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** Upload a file to the server. Browser-only; the desktop app has its own path. */
 export async function upload(path: string, file: File): Promise<Response> {
   const form = new FormData();
