@@ -191,6 +191,7 @@ mod tests {
             app_version: "test".into(),
             narrated: false,
             title: None,
+            submitted: None,
         };
         write_json(&dir.join("session.json"), &meta).unwrap();
         let lines: String = events

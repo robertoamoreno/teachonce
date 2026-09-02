@@ -7,6 +7,7 @@
 
 mod commands;
 mod state;
+mod sync;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -145,6 +146,8 @@ pub fn run() {
             commands::download_whisper_model,
             commands::transcribe_session,
             commands::app_info,
+            commands::submit_session,
+            commands::test_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TeachOnce");

@@ -29,9 +29,10 @@ cargo tree -p skillrec-agent     | grep -c reqwest   # 1, the analysis endpoint
 
 Nothing is sent anywhere until you press **Analyse**, and then only the timeline,
 the events, the narration text, and any screen frames the model explicitly asks
-to look at. The one other outbound path is optional hosted transcription, which
-you have to turn on in Settings and which uploads narration audio only when you
-press **Transcribe**.
+to look at. Two other outbound paths exist and both are off until you configure
+them in Settings: hosted transcription uploads narration audio when you press
+**Transcribe**, and a TeachOnce server receives a whole recording when you press
+**Submit**.
 
 ## Configuring the model
 
@@ -127,12 +128,13 @@ get a second say.
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     65 tests
+crates/core         events, session store, timeline, config     67 tests
 crates/capture      screen, window, clipboard, audio (macOS)    41 tests
 crates/narration    whisper.cpp + hosted transcription          15 tests
 crates/agent        client, agent loop, describer, debrief     52 + 13 tests
 crates/recorder     the lifecycle state machine                  9 tests
-src-tauri           commands, tray, hotkey
+crates/server       HTTP API, upload, pipeline, embedded UI      7 tests
+src-tauri           commands, tray, hotkey, server submit        3 tests (one against a live server, ignored by default)
 ui                  React 19
 ```
 
@@ -157,6 +159,33 @@ cargo test --workspace                              # 195 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```
+
+## The server
+
+`teachonce-server` is the same pipeline without the recorder: the app zips a
+recording and submits it, the server reconstructs, transcribes, analyses and
+debriefs it with the server's own model endpoint, and the same React UI runs in
+a browser to review, answer, plan and build. Recordings live in the app's folder
+layout under the server's data directory, so every library crate works
+unchanged.
+
+```bash
+npm run build                                  # the UI the server embeds
+cargo run -p teachonce-server -- --bind 0.0.0.0:7777
+```
+
+The first start generates a shared API key, prints it, and stores it in
+`server.json` next to the recordings. In the app, Settings → Server takes the
+URL and that key; every recording then has a **Submit to server** button. In a
+browser, the server asks for the key once and keeps it in that browser; Settings
+→ Server shows it and can rotate it.
+
+The API is the app's command surface: `POST /api/rpc/<command>` with a JSON
+body, `POST /api/sessions/upload` with a zip, and `GET /api/events` for
+server-sent progress, all behind `Authorization: Bearer <key>`. It is plain
+HTTP: keep it on a trusted network or put it behind a TLS reverse proxy before
+exposing it further. The server never records anything; it only receives what an
+app chose to send.
 
 ## Building a distributable
 

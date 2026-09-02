@@ -145,6 +145,11 @@ button.small { padding: 3px 10px; font-size: 12px; }
 .edit-step textarea { min-height: 48px; resize: vertical; }
 .edit-step .tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
+/* Server mode */
+.tabs-note { margin-left: auto; align-self: center; color: var(--muted); font-size: 12px; -webkit-app-region: no-drag; }
+.gate { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.gate .panel { width: min(520px, 92vw); }
+
 /* Settings */
 .hint { font-size: 12.5px; margin: -4px 0 10px 120px; }
 

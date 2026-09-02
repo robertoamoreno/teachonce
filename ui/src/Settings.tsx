@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, events, type AppInfo, type ConnectionTest, type Settings } from "./api";
+import { api, events, type AppInfo, type ConnectionTest, type ServerInfo, type Settings } from "./api";
+import { isTauri, setServerKey } from "./transport";
+
+/** Open a link the way each host can: the opener plugin in the app, a tab in a browser. */
+function openLink(url: string, onError: (message: string) => void) {
+  if (isTauri) openUrl(url).catch((err) => onError(String(err)));
+  else window.open(url, "_blank", "noopener");
+}
 
 /** Hosted transcription services speaking the OpenAI audio API. */
 const TRANSCRIPTION_PRESETS = [
@@ -24,11 +31,15 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [about, setAbout] = useState<AppInfo | null>(null);
+  const [server, setServer] = useState<ServerInfo | null>(null);
+  const [serverTest, setServerTest] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch((err) => onError(String(err)));
     api.whisperStatus().then(setWhisper).catch(() => undefined);
     api.appInfo().then(setAbout).catch(() => undefined);
+    if (!isTauri) api.serverInfo().then(setServer).catch(() => undefined);
     const unlisten = events.onDownload((p) => setDownload(p.fraction));
     return () => {
       unlisten.then((off) => off());
@@ -345,6 +356,126 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
         </div>
       </div>
 
+      {isTauri && (
+        <div className="panel">
+          <h2>Server</h2>
+          <p className="muted">
+            Optional. A TeachOnce server processes recordings you submit to it with its own model
+            endpoint and shows them in a browser. Nothing is sent until you press Submit on a
+            recording.
+          </p>
+          <label className="row">
+            <span className="label">Server URL</span>
+            <input
+              value={settings.server.baseUrl}
+              placeholder="http://192.168.1.20:7777"
+              onChange={(e) => {
+                patch({ server: { ...settings.server, baseUrl: e.target.value } });
+                setServerTest(null);
+              }}
+            />
+          </label>
+          <label className="row">
+            <span className="label">API key</span>
+            <input
+              type="password"
+              value={settings.server.apiKey}
+              placeholder="tk_… as printed by the server"
+              onChange={(e) => {
+                patch({ server: { ...settings.server, apiKey: e.target.value } });
+                setServerTest(null);
+              }}
+            />
+          </label>
+          <div className="actions">
+            <button
+              disabled={busy || !settings.server.baseUrl.trim()}
+              onClick={() =>
+                run(async () => {
+                  try {
+                    setServerTest(await api.testServer(settings.server));
+                  } catch (err) {
+                    setServerTest(String(err));
+                  }
+                })
+              }
+            >
+              Test
+            </button>
+            <button
+              className="ghost"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  setSettings(await api.saveSettings(settings));
+                  setSaved(true);
+                })
+              }
+            >
+              Save
+            </button>
+            {saved && <span className="ok-text">Saved</span>}
+          </div>
+          {serverTest && (
+            <p className={serverTest.startsWith("Connected") ? "ok-text" : "warn"}>{serverTest}</p>
+          )}
+        </div>
+      )}
+
+      {!isTauri && (
+        <div className="panel">
+          <h2>Server</h2>
+          <p className="muted">
+            Every app and browser presents this one key. Rotating it locks out everyone until
+            they enter the new one, including this browser, which is updated automatically.
+          </p>
+          {server && (
+            <dl className="kv">
+              <dt>Version</dt>
+              <dd>{server.version}</dd>
+              <dt>Recordings</dt>
+              <dd>
+                <code>{server.dataDir}</code> · {server.sessions} on disk
+              </dd>
+              <dt>API key</dt>
+              <dd>
+                <code>{showKey ? server.apiKey : "•".repeat(12)}</code>
+                <button className="ghost small" onClick={() => setShowKey(!showKey)}>
+                  {showKey ? "Hide" : "Show"}
+                </button>
+              </dd>
+            </dl>
+          )}
+          <div className="actions">
+            <button
+              className="ghost danger"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const { apiKey } = await api.rotateApiKey();
+                  setServerKey(apiKey);
+                  setServer(await api.serverInfo());
+                  setShowKey(true);
+                })
+              }
+            >
+              Rotate key
+            </button>
+            <button
+              className="ghost"
+              disabled={busy}
+              onClick={() => {
+                setServerKey("");
+                window.location.reload();
+              }}
+            >
+              Forget key in this browser
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isTauri && (
       <div className="panel">
         <h2>What to capture</h2>
         <p className="muted">
@@ -384,6 +515,7 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
           Save
         </button>
       </div>
+      )}
 
       <div className="panel about">
         <h2>About {about?.name ?? "TeachOnce"}</h2>
@@ -402,12 +534,16 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
             <dt>Recordings</dt>
             <dd>
               <code>{about.dataDir}</code>
-              <button
-                className="ghost small"
-                onClick={() => revealItemInDir(about.dataDir).catch((err) => onError(String(err)))}
-              >
-                Show in Finder
-              </button>
+              {isTauri && (
+                <button
+                  className="ghost small"
+                  onClick={() =>
+                    revealItemInDir(about.dataDir).catch((err) => onError(String(err)))
+                  }
+                >
+                  Show in Finder
+                </button>
+              )}
             </dd>
             <dt>Skills</dt>
             <dd>
@@ -423,9 +559,7 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
           <button
             className="ghost"
             onClick={() =>
-              openUrl(about?.repository ?? "https://github.com/robertoamoreno/teachonce").catch(
-                (err) => onError(String(err)),
-              )
+              openLink(about?.repository ?? "https://github.com/robertoamoreno/teachonce", onError)
             }
           >
             Source on GitHub

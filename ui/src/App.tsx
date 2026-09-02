@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, events, type RecorderStatus, type SessionSummary } from "./api";
+import { isTauri, serverKey, setServerKey } from "./transport";
 import { Recorder } from "./Recorder";
 import { Library } from "./Library";
 import { SettingsPanel } from "./Settings";
@@ -7,11 +8,13 @@ import { SettingsPanel } from "./Settings";
 type Tab = "record" | "library" | "settings";
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("record");
+  // In a browser there is nothing to record: the library is the front door.
+  const [tab, setTab] = useState<Tab>(isTauri ? "record" : "library");
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hasKey, setHasKey] = useState(isTauri || serverKey() !== "");
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -22,11 +25,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!hasKey) return;
     api.status().then(setStatus).catch((err) => setError(String(err)));
     refreshSessions();
 
     // The recorder can also be driven from the tray and the ⌘⇧R hotkey, so the
-    // UI follows pushed status rather than owning it.
+    // UI follows pushed status rather than owning it. On the server the same
+    // channel carries job updates, which change what the library shows.
     const unlisteners = [
       events.onStatus(setStatus),
       events.onSaved(async (id) => {
@@ -34,19 +39,35 @@ export function App() {
         setSelected(id);
         setTab("library");
       }),
+      events.onJob(() => {
+        refreshSessions();
+      }),
     ];
     return () => {
       unlisteners.forEach((p) => p.then((off) => off()));
     };
-  }, [refreshSessions]);
+  }, [refreshSessions, hasKey]);
+
+  if (!hasKey) {
+    return (
+      <KeyGate
+        onDone={(key) => {
+          setServerKey(key);
+          setHasKey(true);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="app">
       <nav className="tabs">
-        <button className={tab === "record" ? "active" : ""} onClick={() => setTab("record")}>
-          Record
-          {status?.recording && <span className="dot" aria-label="recording" />}
-        </button>
+        {isTauri && (
+          <button className={tab === "record" ? "active" : ""} onClick={() => setTab("record")}>
+            Record
+            {status?.recording && <span className="dot" aria-label="recording" />}
+          </button>
+        )}
         <button className={tab === "library" ? "active" : ""} onClick={() => setTab("library")}>
           Library
           {sessions.length > 0 && <span className="count">{sessions.length}</span>}
@@ -54,6 +75,7 @@ export function App() {
         <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
           Settings
         </button>
+        {!isTauri && <span className="tabs-note">TeachOnce Server</span>}
       </nav>
 
       {error && (
@@ -64,7 +86,7 @@ export function App() {
       )}
 
       <main>
-        {tab === "record" && <Recorder status={status} onError={setError} />}
+        {tab === "record" && isTauri && <Recorder status={status} onError={setError} />}
         {tab === "library" && (
           <Library
             sessions={sessions}
@@ -76,6 +98,43 @@ export function App() {
         )}
         {tab === "settings" && <SettingsPanel onError={setError} />}
       </main>
+    </div>
+  );
+}
+
+/** The browser's front door: the server's API key, kept in this browser only. */
+function KeyGate({ onDone }: { onDone: (key: string) => void }) {
+  const [key, setKey] = useState("");
+  return (
+    <div className="gate">
+      <form
+        className="panel"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (key.trim()) onDone(key.trim());
+        }}
+      >
+        <h2>TeachOnce Server</h2>
+        <p className="muted">
+          Enter the API key this server printed when it started. It is shown again under
+          Settings → Server in this UI and stays in this browser only.
+        </p>
+        <label className="row">
+          <span className="label">API key</span>
+          <input
+            type="password"
+            autoFocus
+            value={key}
+            placeholder="tk_…"
+            onChange={(e) => setKey(e.target.value)}
+          />
+        </label>
+        <div className="actions">
+          <button type="submit" disabled={!key.trim()}>
+            Open the library
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

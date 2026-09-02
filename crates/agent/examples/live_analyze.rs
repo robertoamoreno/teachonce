@@ -81,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
         app_version: "example".into(),
         narrated: false,
         title: None,
+        submitted: None,
     };
     write_json(&dir.join("session.json"), &meta)?;
 

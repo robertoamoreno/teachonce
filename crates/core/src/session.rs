@@ -17,6 +17,15 @@ use crate::clock::{epoch_ms, to_at_ms, EpochMs};
 use crate::events::{EventInput, RecEvent};
 use crate::paths;
 
+/// Where and when a recording was handed to a TeachOnce server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Submission {
+    /// The server's base URL as configured in Settings.
+    pub server: String,
+    pub at: EpochMs,
+}
+
 /// `session.json` — everything needed to interpret the rest of the folder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +42,9 @@ pub struct SessionMeta {
     /// Human-facing name, filled in by analysis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Set when the recording has been submitted to a server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted: Option<Submission>,
 }
 
 impl SessionMeta {
@@ -80,6 +92,7 @@ impl SessionStore {
             app_version: app_version.to_string(),
             narrated: false,
             title: None,
+            submitted: None,
         };
         let dir = paths::sessions_root()?.join(&meta.id);
         std::fs::create_dir_all(dir.join("frames"))
@@ -276,6 +289,44 @@ pub fn set_session_title(dir: &Path, title: Option<&str>) -> Result<()> {
     write_json(&path, &meta)
 }
 
+/// Record that a recording was submitted to `server`.
+pub fn mark_submitted(dir: &Path, server: &str) -> Result<()> {
+    let path = dir.join("session.json");
+    let mut meta: SessionMeta = read_json(&path)
+        .with_context(|| format!("{} has no readable session.json", dir.display()))?;
+    meta.submitted = Some(Submission { server: server.trim_end_matches('/').to_string(), at: epoch_ms() });
+    write_json(&path, &meta)
+}
+
+/// The model-free reconstruction: always produce `bundle.json` and
+/// `description.md` from the events on disk.
+///
+/// This runs the moment a recording stops, and again on a server the moment a
+/// recording arrives, so a recording is never just an opaque folder of JSON.
+pub fn reconstruct_session(dir: &Path) -> Result<()> {
+    let meta: SessionMeta = read_json(&dir.join("session.json"))
+        .context("this recording has no readable session.json")?;
+    let events = read_events(&dir.join("events.jsonl"));
+    let bundle = crate::timeline::build_bundle(&meta, &events);
+    let narration: Option<crate::narration::NarrationTranscript> =
+        read_json(&dir.join("narration.json"));
+
+    write_json(&dir.join("bundle.json"), &bundle).context("writing bundle.json")?;
+    std::fs::write(
+        dir.join("description.md"),
+        crate::describe::render_description(&bundle, narration.as_ref()),
+    )
+    .context("writing description.md")?;
+
+    tracing::info!(
+        steps = bundle.stats.step_count,
+        events = bundle.stats.event_count,
+        frames = bundle.stats.frame_count,
+        "reconstruction complete"
+    );
+    Ok(())
+}
+
 /// Permanently delete a recording and everything in it.
 pub fn delete_session(id: &str) -> Result<()> {
     let dir = paths::session_dir(id)?;
@@ -414,6 +465,21 @@ mod tests {
 
         assert!(set_session_title(&dir.join("missing"), Some("x")).is_err());
         delete_session(&id).unwrap();
+    }
+
+    #[test]
+    fn a_submission_is_recorded_and_listed() {
+        let _data = TempData::new("submit");
+        let store = SessionStore::create("0.1.0-test").unwrap();
+        let dir = store.dir().to_path_buf();
+        store.finalize().unwrap();
+        assert!(list_sessions().unwrap()[0].meta.submitted.is_none());
+
+        mark_submitted(&dir, "http://server.local:7777/").unwrap();
+        let listed = list_sessions().unwrap();
+        let submission = listed[0].meta.submitted.as_ref().unwrap();
+        assert_eq!(submission.server, "http://server.local:7777");
+        assert!(submission.at > 0);
     }
 
     #[test]

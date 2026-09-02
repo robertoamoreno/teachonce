@@ -20,11 +20,8 @@ use skillrec_capture::audio::{AudioManifest, AudioSegment, MicrophoneRecorder};
 use skillrec_capture::collector::{Collector, CollectorHost};
 use skillrec_capture::{ActiveWindowCollector, ClipboardCollector, ScreenCollector};
 use skillrec_core::config::CaptureConfig;
-use skillrec_core::describe::render_description;
 use skillrec_core::events::{EventInput, EventPayload};
-use skillrec_core::narration::NarrationTranscript;
 use skillrec_core::session::{read_events, read_json, write_json, SessionMeta, SessionStore};
-use skillrec_core::timeline::build_bundle;
 use tokio::sync::{mpsc, Mutex};
 
 /// Whether a microphone is running, and why not if it is not.
@@ -402,25 +399,10 @@ pub fn recover_interrupted_sessions() -> Result<usize> {
 /// Post-stop processing: always produce `bundle.json` and `description.md`.
 ///
 /// This is the model-free reconstruction. It runs whether or not an endpoint is
-/// configured, so a recording is never just an opaque folder of JSON.
+/// configured, so a recording is never just an opaque folder of JSON. The work
+/// lives in core so a server can do exactly the same to a recording it receives.
 pub fn process_session(dir: &std::path::Path) -> Result<()> {
-    let meta: SessionMeta = read_json(&dir.join("session.json"))
-        .context("this recording has no readable session.json")?;
-    let events = read_events(&dir.join("events.jsonl"));
-    let bundle = build_bundle(&meta, &events);
-    let narration: Option<NarrationTranscript> = read_json(&dir.join("narration.json"));
-
-    write_json(&dir.join("bundle.json"), &bundle).context("writing bundle.json")?;
-    std::fs::write(dir.join("description.md"), render_description(&bundle, narration.as_ref()))
-        .context("writing description.md")?;
-
-    tracing::info!(
-        steps = bundle.stats.step_count,
-        events = bundle.stats.event_count,
-        frames = bundle.stats.frame_count,
-        "post-processing complete"
-    );
-    Ok(())
+    skillrec_core::session::reconstruct_session(dir)
 }
 
 #[cfg(test)]
@@ -615,6 +597,7 @@ mod tests {
             app_version: "test".into(),
             narrated: false,
             title: None,
+            submitted: None,
         };
         write_json(&dir.join("session.json"), &meta).unwrap();
         std::fs::write(
@@ -647,6 +630,7 @@ mod tests {
             app_version: "test".into(),
             narrated: false,
             title: None,
+            submitted: None,
         };
         write_json(&dir.join("session.json"), &meta).unwrap();
         std::fs::write(

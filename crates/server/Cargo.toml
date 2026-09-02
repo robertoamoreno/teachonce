@@ -1,0 +1,32 @@
+[package]
+name = "teachonce-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "TeachOnce server: recordings submitted from the app, processed with your model endpoint, reviewed in a browser."
+
+[dependencies]
+anyhow.workspace = true
+axum = { version = "0.8", features = ["multipart"] }
+base64 = "0.23"
+directories = "6"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+mime_guess = "2"
+rust-embed = "8"
+serde.workspace = true
+serde_json.workspace = true
+skillrec-agent = { path = "../agent" }
+skillrec-core = { path = "../core" }
+skillrec-narration = { path = "../narration" }
+tokio = { workspace = true, features = ["net", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

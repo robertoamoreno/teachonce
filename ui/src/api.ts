@@ -5,8 +5,7 @@
  * frontend has is exactly this file — there is no ambient `invoke` scattered
  * through components.
  */
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call as invoke, listen } from "./transport";
 
 export type MicrophoneState =
   | { state: "off" }
@@ -30,6 +29,7 @@ export interface SessionSummary {
   appVersion: string;
   narrated: boolean;
   title?: string;
+  submitted?: { server: string; at: number } | null;
   eventCount: number;
   frameCount: number;
   hasTranscript: boolean;
@@ -147,9 +147,32 @@ export interface SessionDetail {
   needsTranscription: boolean;
   transcribeVia: TranscriptionBackend;
   transcribeHost: string;
+  /** The server this app would submit to, when one is configured. Desktop only. */
+  serverUrl?: string | null;
+  /** Where the server-side pipeline is for this recording. Server only. */
+  job?: JobStatus | null;
 }
 
 export type TranscriptionBackend = "local" | "hosted";
+
+export interface JobStatus {
+  id: string;
+  phase: string;
+  message: string;
+  updatedAt: number;
+}
+
+export interface ServerLink {
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface ServerInfo {
+  version: string;
+  dataDir: string;
+  apiKey: string;
+  sessions: number;
+}
 
 export interface Settings {
   capture: {
@@ -180,6 +203,7 @@ export interface Settings {
       requestTimeoutSecs: number;
     };
   };
+  server: ServerLink;
 }
 
 export interface ConnectionTest {
@@ -261,6 +285,16 @@ export const api = {
 
   appInfo: () => invoke<AppInfo>("app_info"),
 
+  // Desktop → server
+  submitSession: (id: string) => invoke<void>("submit_session", { id }),
+  testServer: (link: ServerLink) => invoke<string>("test_server", { link }),
+
+  // Server only
+  serverInfo: () => invoke<ServerInfo>("server_info"),
+  rotateApiKey: () => invoke<{ apiKey: string }>("rotate_api_key"),
+  listJobs: () => invoke<JobStatus[]>("list_jobs"),
+  processSession: (id: string) => invoke<{ queued: boolean }>("process_session", { id }),
+
   whisperStatus: () =>
     invoke<{ model: string; cached: boolean; approxMb: number }>("whisper_status"),
   downloadWhisper: () => invoke<string>("download_whisper_model"),
@@ -280,6 +314,8 @@ export const events = {
     listen<AgentProgress>("agent://progress", (e) => handler(e.payload)),
   onDownload: (handler: (progress: DownloadProgress) => void) =>
     listen<DownloadProgress>("whisper://download", (e) => handler(e.payload)),
+  onJob: (handler: (job: JobStatus) => void) =>
+    listen<JobStatus>("job://status", (e) => handler(e.payload)),
 };
 
 /** Format a millisecond span the way the timeline does. */

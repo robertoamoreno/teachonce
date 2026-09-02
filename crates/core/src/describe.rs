@@ -91,6 +91,7 @@ mod tests {
             app_version: "t".into(),
             narrated: false,
             title: None,
+            submitted: None,
         };
         let mut bundle = build_bundle(&meta, &[]);
         bundle.stats.step_count = steps.len();

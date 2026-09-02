@@ -593,6 +593,7 @@ mod tests {
             app_version: "test".into(),
             narrated: narration.is_some(),
             title: None,
+            submitted: None,
         };
         let bundle = skillrec_core::timeline::build_bundle(&meta, &[]);
         SessionData {

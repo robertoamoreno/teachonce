@@ -131,6 +131,10 @@ pub struct SessionDetail {
     pub transcribe_via: TranscriptionBackend,
     /// Host of the hosted endpoint, for the same button.
     pub transcribe_host: String,
+    /// The server a Submit would go to, when one is configured.
+    pub server_url: Option<String>,
+    /// Server-side pipeline status; never set by the desktop app.
+    pub job: Option<serde_json::Value>,
 }
 
 #[tauri::command]
@@ -142,9 +146,14 @@ pub async fn load_session(id: String, state: State<'_, AppState>) -> Reply<Sessi
         .into_iter()
         .find(|s| s.meta.id == id)
         .ok_or_else(|| format!("no recording called {id}"))?;
-    let narration = state.settings.lock().await.narration.clone();
+    let (narration, server) = {
+        let settings = state.settings.lock().await;
+        (settings.narration.clone(), settings.server.clone())
+    };
 
     Ok(SessionDetail {
+        server_url: server.is_configured().then(|| server.base()),
+        job: None,
         description: std::fs::read_to_string(dir.join("description.md")).unwrap_or_default(),
         timeline: serde_json::to_value(data.timeline_view()).unwrap_or_default(),
         narration: data.narration.clone(),
@@ -381,6 +390,24 @@ pub async fn build_skill(
         .map_err(fail)?;
 
     Ok(BuildResult { skill, path: path.display().to_string() })
+}
+
+// --- Server ------------------------------------------------------------------
+
+/// Zip the recording and hand it to the configured server.
+#[tauri::command]
+pub async fn submit_session(id: String, state: State<'_, AppState>) -> Reply<()> {
+    let dir = skillrec_core::paths::session_dir(&id).map_err(fail)?;
+    let link = state.settings.lock().await.server.clone();
+    crate::sync::submit(&dir, &link).await.map_err(fail)?;
+    skillrec_core::session::mark_submitted(&dir, &link.base()).map_err(fail)?;
+    Ok(())
+}
+
+/// Check a server URL and key from the Settings form.
+#[tauri::command]
+pub async fn test_server(link: skillrec_core::config::ServerLink) -> Reply<String> {
+    crate::sync::test(&link).await.map_err(fail)
 }
 
 // --- About -------------------------------------------------------------------

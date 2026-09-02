@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   api,
   events,
@@ -9,10 +10,12 @@ import {
   type DebriefReply,
   type FixedValue,
   type FrameRecord,
+  type JobStatus,
   type SessionDetail,
   type SessionSummary,
   type SkillPlan,
 } from "./api";
+import { isTauri } from "./transport";
 
 interface Props {
   sessions: SessionSummary[];
@@ -82,6 +85,25 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
     };
   }, []);
 
+  // On the server, a submitted recording is processed in the background; its
+  // status arrives here, and the detail is reloaded when the pipeline moves on.
+  const [job, setJob] = useState<JobStatus | null>(null);
+  useEffect(() => {
+    setJob(detail?.job ?? null);
+  }, [detail]);
+  useEffect(() => {
+    if (isTauri) return;
+    const unlisten = events.onJob((update) => {
+      if (update.id !== selectedRef.current) return;
+      setJob(update);
+      if (update.phase === "done" || update.phase === "failed") load(update.id);
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [load]);
+  const jobActive = job !== null && job.phase !== "done" && job.phase !== "failed";
+
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setBusySince(Date.now());
@@ -135,6 +157,7 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
               {session.narrated && <span className="badge">narrated</span>}
               {session.hasAnalysis && <span className="badge ok">analysed</span>}
               {session.hasSkill && <span className="badge ok">skill</span>}
+              {session.submitted && <span className="badge">on server</span>}
               <span className="badge muted">{session.frameCount} frames</span>
             </div>
           </button>
@@ -170,6 +193,58 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                 {progress}
                 {elapsed >= 5 && <span className="muted"> · {formatSpan(elapsed * 1000)}</span>}
               </p>
+            )}
+            {!busy && job && jobActive && (
+              <p className="progress">
+                Server is working on this recording: {job.message}
+              </p>
+            )}
+            {!busy && job && job.phase === "failed" && (
+              <p className="warn">
+                The server's pipeline stopped: {job.message}{" "}
+                <button
+                  className="ghost small"
+                  onClick={() => run(async () => api.processSession(detail.summary.id))}
+                >
+                  Run again
+                </button>
+              </p>
+            )}
+
+            {isTauri && detail.serverUrl && (
+              <div className="panel">
+                <h2>Server</h2>
+                <p className="muted">
+                  {detail.summary.submitted
+                    ? `Submitted to ${detail.summary.submitted.server} on ${new Date(detail.summary.submitted.at).toLocaleString()}. Submitting again replaces that copy.`
+                    : `Send this recording — events, frames, narration and any analysis so far — to ${detail.serverUrl}. The server processes it with its own model endpoint.`}
+                </p>
+                <div className="actions">
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => {
+                        setProgress("Uploading the recording…");
+                        await api.submitSession(detail.summary.id);
+                        await load(detail.summary.id);
+                        onChanged();
+                      })
+                    }
+                  >
+                    {detail.summary.submitted ? "Submit again" : "Submit to server"}
+                  </button>
+                  {detail.summary.submitted && (
+                    <button
+                      className="ghost"
+                      onClick={() =>
+                        openUrl(detail.summary.submitted!.server).catch((err) => onError(String(err)))
+                      }
+                    >
+                      Open the server
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
 
             {detail.needsTranscription && (
@@ -409,21 +484,23 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                       >
                         Install skill
                       </button>
-                      <button
-                        className="ghost"
-                        disabled={busy}
-                        onClick={() =>
-                          run(async () => {
-                            const dir = await open({ directory: true });
-                            if (typeof dir !== "string") return;
-                            await api.buildSkill(detail.summary.id, values, dir);
-                            await load(detail.summary.id);
-                            onChanged();
-                          })
-                        }
-                      >
-                        Export to a folder…
-                      </button>
+                      {isTauri && (
+                        <button
+                          className="ghost"
+                          disabled={busy}
+                          onClick={() =>
+                            run(async () => {
+                              const dir = await open({ directory: true });
+                              if (typeof dir !== "string") return;
+                              await api.buildSkill(detail.summary.id, values, dir);
+                              await load(detail.summary.id);
+                              onChanged();
+                            })
+                          }
+                        >
+                          Export to a folder…
+                        </button>
+                      )}
                       <button className="ghost" disabled={busy} onClick={() => setPlan(null)}>
                         Discard plan
                       </button>

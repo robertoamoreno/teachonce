@@ -15,6 +15,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow.workspace = true
 base64 = "0.23"
+# Only for submitting a recording to a server the user configured.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots", "multipart"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

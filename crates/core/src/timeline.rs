@@ -318,6 +318,7 @@ mod tests {
             app_version: "test".into(),
             narrated: false,
             title: None,
+            submitted: None,
         }
     }
 

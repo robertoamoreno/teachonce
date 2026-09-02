@@ -255,6 +255,38 @@ impl Default for NarrationConfig {
     }
 }
 
+/// A TeachOnce server the app can hand recordings to. Empty means none.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ServerLink {
+    /// Base URL of the server, e.g. `http://192.168.1.20:7777`.
+    pub base_url: String,
+    /// The server's shared API key, sent as `Authorization: Bearer …`.
+    pub api_key: String,
+}
+
+impl ServerLink {
+    pub fn is_configured(&self) -> bool {
+        !self.base_url.trim().is_empty()
+    }
+
+    /// The base URL without a trailing slash.
+    pub fn base(&self) -> String {
+        self.base_url.trim().trim_end_matches('/').to_string()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let url = self.base_url.trim();
+        anyhow::ensure!(!url.is_empty(), "no server URL is configured");
+        anyhow::ensure!(
+            url.starts_with("http://") || url.starts_with("https://"),
+            "the server URL must start with http:// or https://"
+        );
+        anyhow::ensure!(!self.api_key.trim().is_empty(), "the server needs its API key");
+        Ok(())
+    }
+}
+
 /// Everything persisted in `settings.json`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -262,6 +294,7 @@ pub struct Settings {
     pub capture: CaptureConfig,
     pub llm: LlmConfig,
     pub narration: NarrationConfig,
+    pub server: ServerLink,
 }
 
 impl Settings {
@@ -352,6 +385,22 @@ mod tests {
         assert!(hosted.validate().is_ok(), "a key is optional: self-hosted servers need none");
         assert!(HostedTranscription { base_url: "api.openai.com".into(), ..Default::default() }.validate().is_err());
         assert!(HostedTranscription { model: " ".into(), ..Default::default() }.validate().is_err());
+    }
+
+    #[test]
+    fn a_server_link_is_off_until_a_url_is_given() {
+        let none = ServerLink::default();
+        assert!(!none.is_configured());
+        assert!(none.validate().is_err());
+        let link = ServerLink { base_url: " http://box.local:7777/ ".into(), api_key: "tk_1".into() };
+        assert!(link.is_configured());
+        assert_eq!(link.base(), "http://box.local:7777");
+        assert!(link.validate().is_ok());
+        assert!(ServerLink { base_url: "box.local".into(), api_key: "k".into() }.validate().is_err());
+        assert!(ServerLink { base_url: "http://box.local".into(), api_key: " ".into() }.validate().is_err());
+        // Older settings files have no server section and stay unconfigured.
+        let s: Settings = serde_json::from_str(r#"{"llm":{"model":"x"}}"#).unwrap();
+        assert!(!s.server.is_configured());
     }
 
     #[test]
