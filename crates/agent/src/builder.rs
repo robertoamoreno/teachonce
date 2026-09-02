@@ -253,11 +253,17 @@ impl SkillBuilder {
         };
 
         agent.run_turn(prompt, on_progress).await?;
-        captured
+        let mut plan = captured
             .lock()
             .unwrap()
             .take()
-            .context("the model finished without proposing a plan")
+            .context("the model finished without proposing a plan")?;
+        // What the plan leaves out is computed, not asked: the model already
+        // made its call, and the user gets to see it.
+        if let Some(analysis) = data.analysis.as_ref() {
+            plan.omitted_pages = skillrec_core::pages::pages_not_in_plan(analysis, &data.visits(), &plan);
+        }
+        Ok(plan)
     }
 
     /// Phase two: build the SKILL.md from the plan the user approved.
@@ -406,6 +412,10 @@ pub fn apply_value_edits(plan: &mut SkillPlan, edits: &[FixedValue]) {
             if !edit.name.trim().is_empty() {
                 existing.name = edit.name.clone();
             }
+        } else if !edit.id.trim().is_empty() && !edit.value.trim().is_empty() {
+            // A value the user added in review — typically a page the plan
+            // left out — is as binding as one the model proposed.
+            plan.values.push(edit.clone());
         }
     }
 }
@@ -442,6 +452,7 @@ mod tests {
                 },
             ],
             allowed_tools: vec!["Bash(gh *)".into()],
+            omitted_pages: vec![],
         }
     }
 
@@ -514,14 +525,32 @@ mod tests {
     }
 
     #[test]
-    fn edits_to_unknown_values_are_ignored() {
+    fn a_value_the_user_adds_in_review_is_appended_after_the_models() {
+        // A page the plan left out, added from the "Visited, but not in the
+        // plan" list: it joins the plan without disturbing what the model chose.
         let mut plan = plan();
         apply_value_edits(
             &mut plan,
-            &[FixedValue { id: "nope".into(), name: "x".into(), value: "y".into() }],
+            &[FixedValue { id: "release_doc_url".into(), name: "Release doc".into(), value: "https://x/doc".into() }],
+        );
+        assert_eq!(plan.values.len(), 2);
+        assert_eq!(plan.values[0].value, "acme/widgets");
+        assert_eq!(plan.values[1].id, "release_doc_url");
+    }
+
+    #[test]
+    fn a_value_added_in_review_joins_the_plan_and_a_blank_one_does_not() {
+        let mut plan = SkillPlan::default();
+        apply_value_edits(
+            &mut plan,
+            &[
+                FixedValue { id: "release_doc_url".into(), name: "Release doc".into(), value: "https://x/doc".into() },
+                FixedValue { id: "".into(), name: "".into(), value: "https://y".into() },
+                FixedValue { id: "empty".into(), name: "Empty".into(), value: "  ".into() },
+            ],
         );
         assert_eq!(plan.values.len(), 1);
-        assert_eq!(plan.values[0].value, "acme/widgets");
+        assert_eq!(plan.values[0].id, "release_doc_url");
     }
 
     #[test]

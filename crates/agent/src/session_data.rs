@@ -35,7 +35,7 @@ impl SessionData {
             .with_context(|| format!("{} has no readable session.json", dir.display()))?;
         let events = read_events(&dir.join("events.jsonl"));
         let bundle = build_bundle(&meta, &events);
-        Ok(Self {
+        let mut data = Self {
             id: meta.id.clone(),
             dir: dir.to_path_buf(),
             events,
@@ -44,7 +44,23 @@ impl SessionData {
             frames: read_json(&dir.join("frames.json")).unwrap_or_default(),
             analysis: read_json(&dir.join("analysis.json")),
             meta,
-        })
+        };
+        // The pages each step was on are facts from the events; stamping on
+        // every load means analyses written before this existed get them too.
+        if let Some(analysis) = data.analysis.as_mut() {
+            skillrec_core::pages::stamp_step_urls(analysis, &data_visits(&data.events));
+        }
+        Ok(data)
+    }
+
+    /// Every navigation in the recording, in order.
+    pub fn visits(&self) -> Vec<skillrec_core::pages::Visit> {
+        data_visits(&self.events)
+    }
+
+    /// Stamp an analysis with the pages open during each step.
+    pub fn stamp(&self, analysis: &mut skillrec_core::analysis::Analysis) {
+        skillrec_core::pages::stamp_step_urls(analysis, &self.visits());
     }
 
     /// Read a frame's JPEG bytes, refusing any path that leaves the folder.
@@ -171,6 +187,10 @@ impl SessionData {
             "events": shown,
         })
     }
+}
+
+fn data_visits(events: &[RecEvent]) -> Vec<skillrec_core::pages::Visit> {
+    skillrec_core::pages::visits(events)
 }
 
 #[cfg(test)]

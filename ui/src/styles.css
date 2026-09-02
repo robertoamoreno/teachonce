@@ -201,3 +201,13 @@ button.small { padding: 3px 10px; font-size: 12px; }
 }
 .lightbox img { max-width: 92vw; max-height: 84vh; border-radius: 8px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); }
 .lightbox p { color: var(--muted); margin: 0; }
+
+/* Pages: exact addresses under analysis steps, and the plan's omissions. */
+.urls { list-style: none; padding: 0; margin: 5px 0 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.urls code, .omitted code { font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; word-break: break-all; }
+.omitted { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.omitted h3 { margin: 0 0 4px; font-size: 13px; }
+.omitted ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.omitted li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); }
+.omitted li > div { min-width: 0; }
+.omitted button { flex: none; }

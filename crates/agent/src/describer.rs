@@ -373,6 +373,7 @@ impl Describer {
 
         let mut analysis =
             Analysis::from_submission(&session_id, &model, previous.as_ref(), submission);
+        data.stamp(&mut analysis);
         if let Some(feedback) = feedback {
             analysis.log_feedback(feedback);
         }

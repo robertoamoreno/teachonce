@@ -164,6 +164,19 @@ Only make a value for something genuinely fixed. If a target varies run to run �
 instruction telling the agent to locate it. Never pin a path to one machine just
 because the recording used it once.
 
+## Pages are facts — account for every one
+
+Under each analysis step, `pages:` lists the exact addresses that were open
+during it, taken from the recording's events — not from memory. For every page
+the procedure needs, decide one of two things:
+- the same page every run (an agent, a board, a parent document) → a fixed
+  value holding that exact address;
+- a page that differs per run (a chat with an id in it, this sprint's document)
+  → a step that says how the agent finds it, and a line in `generalization`
+  saying why it is not pinned.
+A page the procedure needs must never simply go unmentioned. The user is shown
+every visited page your plan leaves out.
+
 ## Prefer real tools over replaying clicks
 
 Map each recorded action to a real capability:
@@ -201,6 +214,10 @@ actions are the steps worth checking twice.
   handling and edge cases.
 - **No surprises.** The skill does exactly what its description says — no hidden
   side effects and no data leaving the machine the user would not expect.
+- **Cite the token where a page is opened.** When a step opens a page that is
+  a fixed value, write `Open {{release_doc_url}}` — never a description of the
+  page in its place. The agent running the skill has the address only through
+  the token.
 
 ## The debrief is authoritative
 

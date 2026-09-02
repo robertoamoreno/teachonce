@@ -77,6 +77,11 @@ pub struct SkillPlan {
     /// Tool patterns the skill is permitted to use.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    /// Pages the recording visited that this plan neither pins as a value
+    /// nor mentions. Computed after the model proposes, never by it, so the
+    /// user sees what was left out and can add a page as a value.
+    #[serde(default)]
+    pub omitted_pages: Vec<crate::pages::VisitedPage>,
 }
 
 /// The finished artifact.

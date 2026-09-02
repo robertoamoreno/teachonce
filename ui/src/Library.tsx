@@ -1,21 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  api,
-  events,
-  formatSpan,
-  type Analysis,
-  type AnalysisStep,
-  type DebriefReply,
-  type FixedValue,
-  type FrameRecord,
-  type JobStatus,
-  type SessionDetail,
-  type SessionSummary,
-  type SkillPlan,
-} from "./api";
+import { api, events, formatSpan, type Analysis, type AnalysisStep, type DebriefReply, type FixedValue, type FrameRecord, type JobStatus, type SessionDetail, type SessionSummary, type SkillPlan, type VisitedPage } from "./api";
 import { isTauri } from "./transport";
+
+/** Two spellings of one page compare equal: scheme, www. and a trailing slash do not count. */
+function sameUrl(a: string, b: string) {
+  const strip = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[#/]+$/, "");
+  return strip(a) === strip(b);
+}
+
+/** A readable name for a visited page: its title, else host and path. */
+function pageLabel(page: VisitedPage) {
+  if (page.title.trim()) return page.title.trim();
+  try {
+    const u = new URL(page.url);
+    return u.host.replace(/^www\./, "") + (u.pathname === "/" ? "" : u.pathname);
+  } catch {
+    return page.url;
+  }
+}
+
+/** A snake_case value id from the page's name, unique among the existing values. */
+function valueIdFor(page: VisitedPage, existing: FixedValue[]) {
+  const base =
+    pageLabel(page)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .split("_")
+      .slice(0, 4)
+      .join("_") || "page";
+  let id = `${base}_url`;
+  for (let n = 2; existing.some((v) => v.id === id); n += 1) id = `${base}_${n}_url`;
+  return id;
+}
 
 interface Props {
   sessions: SessionSummary[];
@@ -133,8 +152,12 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
       const untouchedByModel = before !== undefined && before.value === value.value;
       return untouchedByModel && edited ? { ...value, value: edited.value } : value;
     });
+    // Values the user added in review (pages the plan left out) outlive a refine.
+    const added = values.filter(
+      (v) => !next.values.some((n) => n.id === v.id) && !previous?.values.some((p) => p.id === v.id),
+    );
     setPlan(next);
-    setValues(merged);
+    setValues([...merged, ...added]);
     setPlanFeedback("");
   };
 
@@ -347,6 +370,15 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                         {step.startMs != null && ` · ${formatSpan(step.startMs)}`} ·{" "}
                         {step.confidence}
                       </small>
+                      {step.urls?.length > 0 && (
+                        <ul className="urls">
+                          {step.urls.map((url) => (
+                            <li key={url}>
+                              <code>{url}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   ))}
                 </ol>
@@ -437,6 +469,45 @@ export function Library({ sessions, selected, onSelect, onChanged, onError }: Pr
                             />
                           </label>
                         ))}
+                      </div>
+                    )}
+
+                    {plan.omittedPages?.filter((page) => !values.some((v) => sameUrl(v.value, page.url))).length > 0 && (
+                      <div className="omitted">
+                        <h3>Visited, but not in the plan</h3>
+                        <p className="muted">
+                          Pages from the recording the plan neither pins as a value nor mentions. A page that is
+                          the same every run belongs in the skill as a value; one with a one-run id in it usually
+                          does not.
+                        </p>
+                        <ul>
+                          {plan.omittedPages
+                            .filter((page) => !values.some((v) => sameUrl(v.value, page.url)))
+                            .map((page) => (
+                              <li key={page.url}>
+                                <div>
+                                  <strong>{pageLabel(page)}</strong>
+                                  {page.stepIds.length > 0 && (
+                                    <small className="muted"> · {page.stepIds.join(", ")}</small>
+                                  )}
+                                  <br />
+                                  <code>{page.url}</code>
+                                </div>
+                                <button
+                                  className="ghost small"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setValues([
+                                      ...values,
+                                      { id: valueIdFor(page, values), name: pageLabel(page), value: page.url },
+                                    ])
+                                  }
+                                >
+                                  Add as value
+                                </button>
+                              </li>
+                            ))}
+                        </ul>
                       </div>
                     )}
 
@@ -587,7 +658,7 @@ function AnalysisEditor({
   const add = () =>
     setSteps([
       ...steps,
-      { id: "", title: "", detail: "", apps: [], evidence: [], confidence: "medium" },
+      { id: "", title: "", detail: "", apps: [], evidence: [], urls: [], confidence: "medium" },
     ]);
 
   // Ids stay dense and in order, whatever was removed or moved.

@@ -7,6 +7,7 @@
 //! it stays unit-testable without a screen, a microphone, or a network.
 
 pub mod analysis;
+pub mod pages;
 pub mod clock;
 pub mod config;
 pub mod describe;

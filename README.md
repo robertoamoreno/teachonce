@@ -16,10 +16,11 @@ capture ──► local reconstruction ──► [ your endpoint ] ──► rev
 
 ## The privacy boundary
 
-There is exactly one crate in this workspace that can open a network connection:
-`skillrec-agent`. Screen capture, window tracking, clipboard, frame selection and
-speech-to-text all live in crates that have no HTTP client compiled into them at
-all. That is not a policy statement — it is checkable:
+Two library crates can open a network connection: `skillrec-agent`, the analysis
+endpoint, and `skillrec-narration`, which downloads Whisper weights and, only if
+you turn it on, uploads narration to a hosted transcriber. Screen capture, window
+tracking, clipboard and frame selection live in crates that have no HTTP client
+compiled into them at all. That is not a policy statement — it is checkable:
 
 ```bash
 cargo tree -p skillrec-capture   | grep -c reqwest   # 0
@@ -135,13 +136,21 @@ fields you can edit), and the ordered steps, each tagged `calculation` or
 plan — and it writes the `SKILL.md`. Your edited values win — the model does not
 get a second say.
 
+**Pages are facts, not paraphrase.** Every address the recording visited is
+stamped onto the analysis steps by time, straight from the events, and shown
+under each step. When the plan comes back, any visited page it neither pins as a
+value nor mentions is listed under **Visited, but not in the plan** with an
+*Add as value* button. The planner still decides what is fixed and what varies
+per run — a chat page with an id in it is not a fixed value — but nothing you
+visited can drop out of the skill without you seeing it.
+
 ## Layout
 
 ```
-crates/core         events, session store, timeline, config     67 tests
+crates/core         events, session store, timeline, pages      73 tests
 crates/capture      screen, window, clipboard, audio (macOS)    43 tests
 crates/narration    whisper.cpp + hosted transcription          15 tests
-crates/agent        client, agent loop, describer, debrief     53 + 14 tests
+crates/agent        client, agent loop, describer, debrief     54 + 14 tests
 crates/recorder     the lifecycle state machine                  9 tests
 crates/server       HTTP API, upload, pipeline, embedded UI      9 tests
 src-tauri           commands, tray, hotkey, server submit        3 tests (one against a live server, ignored by default)
@@ -165,7 +174,7 @@ macOS will ask for Screen Recording on first capture, and for Automation the
 first time you record with a given browser in front.
 
 ```bash
-cargo test --workspace                              # 195 tests
+cargo test --workspace                              # 219 tests
 cargo clippy --workspace --all-targets              # clean
 cargo run -p skillrec-capture --example smoke       # 4s live capture, prints what it saw
 ```
@@ -184,7 +193,8 @@ npm run build                                  # the UI the server embeds
 cargo run -p teachonce-server -- --bind 0.0.0.0:7777
 ```
 
-The first start generates a shared API key, prints it, and stores it in
+`--data-dir` chooses where recordings, `server.json` and built skills live; the
+default is the server's own application-support folder. The first start generates a shared API key, prints it, and stores it in
 `server.json` next to the recordings. In the app, Settings → Server takes the
 URL and that key; every recording then has a **Submit to server** button. In a
 browser, the server asks for the key once and keeps it in that browser; Settings
@@ -235,7 +245,9 @@ on first transcription.
     analysis.json skill.json
 ```
 
-Built skills go to `~/.config/skills/<name>/SKILL.md`, or a folder you pick.
+Built skills go to `~/.config/skills/<name>/SKILL.md`, or a folder you pick —
+`~/.claude/skills` for Claude Code. The server's **Download skill** hands you the
+same folder as a zip.
 
 Recordings made while the app was still called Skill Recorder lived under
 `com.skillrecorder.app`; the first launch of TeachOnce moves that folder into

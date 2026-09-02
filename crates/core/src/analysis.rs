@@ -44,6 +44,10 @@ pub struct AnalysisStep {
     /// Short references the model relied on — an event type, a URL, a frame file.
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// The pages open during this step: exact addresses stamped from the
+    /// events by time (see [`crate::pages`]), never written by a model.
+    #[serde(default)]
+    pub urls: Vec<String>,
     #[serde(default)]
     pub confidence: Confidence,
 }
@@ -357,6 +361,9 @@ impl Analysis {
             if !step.apps.is_empty() {
                 out.push_str(&format!("   _apps: {}_\n", step.apps.join(", ")));
             }
+            if !step.urls.is_empty() {
+                out.push_str(&format!("   pages: {}\n", step.urls.join(" ; ")));
+            }
         }
 
         let answered: Vec<&DebriefQuestion> =
@@ -428,6 +435,7 @@ mod tests {
                 end_ms: Some(4_000),
                 apps: vec!["Safari".into()],
                 evidence: vec!["browser.url".into()],
+                urls: vec![],
                 confidence: Confidence::High,
             }],
         }

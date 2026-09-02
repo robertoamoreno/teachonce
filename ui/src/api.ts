@@ -47,6 +47,8 @@ export interface AnalysisStep {
   endMs?: number | null;
   apps: string[];
   evidence: string[];
+  /** Pages open during the step: exact addresses from the events, never from a model. */
+  urls: string[];
   confidence: Confidence;
 }
 
@@ -101,6 +103,12 @@ export interface PlanStep {
   tool: string;
 }
 
+export interface VisitedPage {
+  url: string;
+  title: string;
+  stepIds: string[];
+}
+
 export interface SkillPlan {
   name: string;
   title: string;
@@ -110,6 +118,8 @@ export interface SkillPlan {
   values: FixedValue[];
   steps: PlanStep[];
   allowedTools: string[];
+  /** Visited pages the plan neither pins nor mentions. Computed, not proposed. */
+  omittedPages: VisitedPage[];
 }
 
 export interface BuiltSkill {
