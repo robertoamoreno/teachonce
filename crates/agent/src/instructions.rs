@@ -215,7 +215,9 @@ answer into the skill:
 - a **precondition** answer becomes a check at the top;
 - an **outcome** answer becomes the definition of done;
 - a **gotcha** answer goes into a Gotchas section, verbatim in spirit.
-Never contradict an answer, and never invent handling the user did not describe.
+Every answered question must leave a visible trace in the plan. A precondition
+answer is always the first step, before anything else runs. Never contradict an
+answer, and never invent handling the user did not describe.
 
 ## Your tools
 
@@ -305,7 +307,13 @@ mod tests {
     #[test]
     fn the_builder_is_told_the_debrief_is_authoritative() {
         assert!(SKILL_BUILDER.contains("## The debrief is authoritative"));
-        assert!(SKILL_BUILDER.contains("Never contradict an answer"));
+        // The briefs are hard-wrapped, so phrases are checked with whitespace
+        // collapsed rather than pinned to one wrapping.
+        let flat = SKILL_BUILDER.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("Never contradict an answer"));
+        // Seen live: an 8B model kept four of five answers and dropped the
+        // precondition, so the brief pins it to the first step explicitly.
+        assert!(flat.contains("A precondition answer is always the first step"));
         assert!(DESCRIBER.contains("Debrief"));
     }
 
