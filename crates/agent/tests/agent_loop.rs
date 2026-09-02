@@ -205,6 +205,28 @@ async fn a_server_that_rejects_reasoning_effort_gets_it_dropped_and_the_turn_com
 }
 
 #[tokio::test]
+async fn a_reasoning_model_that_only_takes_its_default_temperature_gets_none() {
+    let server = StubServer::start(vec![
+        json!({ "__status": 400, "error": { "message": "litellm.BadRequestError: OpenAIException - Unsupported value: 'temperature' does not support 0.1 with this model. Only the default (1) value is supported.. Received Model Group=gpt-5.5 Available Model Group Fallbacks=None" } }),
+        tool_call("submit_analysis", json!({ "intent": "x" }), Some("c1")),
+        tool_call("submit_analysis", json!({ "intent": "y" }), Some("c2")),
+    ]);
+    let config = server.config();
+    let captured = Arc::new(std::sync::Mutex::new(None));
+    let mut agent = build(config, Arc::clone(&captured), Arc::new(AtomicUsize::new(0)));
+
+    agent.run_turn("go", &noop).await.unwrap();
+    agent.run_turn("again", &noop).await.unwrap();
+
+    let requests = server.requests();
+    assert_eq!(requests.len(), 3, "one rejected request, its retry, and a later turn");
+    assert!(requests[0].get("temperature").is_some());
+    assert!(requests[1].get("temperature").is_none(), "dropped after the rejection");
+    assert!(requests[2].get("temperature").is_none(), "and stays dropped for the client's life");
+    assert!(captured.lock().unwrap().is_some());
+}
+
+#[tokio::test]
 async fn progress_names_every_model_turn_and_tool_call() {
     let server = StubServer::start(vec![
         tool_call("get_timeline", json!({}), Some("c1")),

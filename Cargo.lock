@@ -5054,7 +5054,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skillrec-agent"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5071,7 +5071,7 @@ dependencies = [
 
 [[package]]
 name = "skillrec-capture"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5088,7 +5088,7 @@ dependencies = [
 
 [[package]]
 name = "skillrec-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -5102,7 +5102,7 @@ dependencies = [
 
 [[package]]
 name = "skillrec-narration"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -5118,7 +5118,7 @@ dependencies = [
 
 [[package]]
 name = "skillrec-recorder"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -5710,7 +5710,7 @@ dependencies = [
 
 [[package]]
 name = "teachonce"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -5735,7 +5735,7 @@ dependencies = [
 
 [[package]]
 name = "teachonce-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",

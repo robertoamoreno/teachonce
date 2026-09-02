@@ -50,7 +50,10 @@ Settings → Model endpoint. Anything speaking the OpenAI chat-completions API:
 they answer; on a laptop that is the difference between a five-second turn and a
 three-minute one. Settings → Reasoning → **None** sends `reasoning_effort: none`,
 which Ollama honours. A server that rejects the field is detected and it is dropped
-for the rest of the session, so the setting is safe to leave on.
+for the rest of the session, so the setting is safe to leave on. The same goes
+for `temperature`: analysis turns ask for 0.1, and a reasoning model that only
+takes its default (gpt-5, the o-series, behind OpenAI or LiteLLM) refuses that
+once, after which the client sends none.
 
 Turn off **"This model can see images"** for a text-only model. The describer then
 never offers itself the frame tools and works from events and narration alone,
@@ -136,9 +139,9 @@ get a second say.
 
 ```
 crates/core         events, session store, timeline, config     67 tests
-crates/capture      screen, window, clipboard, audio (macOS)    41 tests
+crates/capture      screen, window, clipboard, audio (macOS)    43 tests
 crates/narration    whisper.cpp + hosted transcription          15 tests
-crates/agent        client, agent loop, describer, debrief     52 + 13 tests
+crates/agent        client, agent loop, describer, debrief     53 + 14 tests
 crates/recorder     the lifecycle state machine                  9 tests
 crates/server       HTTP API, upload, pipeline, embedded UI      7 tests
 src-tauri           commands, tray, hotkey, server submit        3 tests (one against a live server, ignored by default)
@@ -199,7 +202,7 @@ app chose to send.
 ```bash
 PATH=/usr/bin:$PATH npm run tauri build
 # → target/release/bundle/macos/TeachOnce.app
-# → target/release/bundle/dmg/TeachOnce_0.2.0_aarch64.dmg
+# → target/release/bundle/dmg/TeachOnce_0.2.1_aarch64.dmg
 # add `-- --target universal-apple-darwin` for a DMG that also runs on Intel Macs
 ```
 

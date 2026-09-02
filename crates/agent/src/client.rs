@@ -214,7 +214,8 @@ impl ToolDef {
 struct ChatRequest<'a> {
     model: &'a str,
     messages: &'a [ChatMessage],
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     max_tokens: u32,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     tools: &'a [ToolDef],
@@ -268,6 +269,9 @@ pub struct LlmClient {
     /// Set once the server has refused `reasoning_effort`, so it is not sent
     /// again for the life of this client.
     reasoning_rejected: AtomicBool,
+    /// Likewise for `temperature`: reasoning models (gpt-5, the o-series)
+    /// accept only their default and reject anything else outright.
+    temperature_rejected: AtomicBool,
 }
 
 impl LlmClient {
@@ -277,7 +281,12 @@ impl LlmClient {
             .timeout(Duration::from_secs(config.request_timeout_secs))
             .build()
             .context("building the HTTP client")?;
-        Ok(Self { http, config, reasoning_rejected: AtomicBool::new(false) })
+        Ok(Self {
+            http,
+            config,
+            reasoning_rejected: AtomicBool::new(false),
+            temperature_rejected: AtomicBool::new(false),
+        })
     }
 
     /// The `reasoning_effort` to put on the wire right now.
@@ -286,6 +295,14 @@ impl LlmClient {
             return None;
         }
         self.config.reasoning_effort_to_send()
+    }
+
+    /// The `temperature` to put on the wire right now.
+    fn temperature_to_send(&self) -> Option<f32> {
+        if self.temperature_rejected.load(Ordering::Relaxed) {
+            return None;
+        }
+        Some(self.config.temperature)
     }
 
     pub fn config(&self) -> &LlmConfig {
@@ -388,10 +405,11 @@ impl LlmClient {
             // agent needs a specific tool called it nudges in prose instead
             // (see `agent.rs`).
             let reasoning = self.reasoning_to_send();
+            let temperature = self.temperature_to_send();
             let request = ChatRequest {
                 model: &self.config.model,
                 messages,
-                temperature: self.config.temperature,
+                temperature,
                 max_tokens: self.config.max_tokens,
                 tools,
                 tool_choice: (!tools.is_empty()).then_some("auto"),
@@ -426,6 +444,15 @@ impl LlmClient {
                     self.reasoning_rejected.store(true, Ordering::Relaxed);
                     continue;
                 }
+                // Same story for `temperature`: a reasoning model behind OpenAI or
+                // LiteLLM answers "Unsupported value: 'temperature' does not
+                // support 0.1 with this model. Only the default (1) value is
+                // supported." Its default is the only choice, so use it.
+                if temperature.is_some() && is_temperature_unsupported(status, &detail) {
+                    tracing::info!("the model server rejects temperature; sending without it from now on");
+                    self.temperature_rejected.store(true, Ordering::Relaxed);
+                    continue;
+                }
                 anyhow::bail!("the model server answered {status}: {detail}");
             }
 
@@ -458,6 +485,15 @@ pub fn is_reasoning_unsupported(status: reqwest::StatusCode, detail: &str) -> bo
     text.contains("reasoning")
         || ((text.contains("unrecognized") || text.contains("unsupported") || text.contains("unknown field"))
             && text.contains("effort"))
+}
+
+/// Did a 4xx come from the model refusing any `temperature` but its default?
+///
+/// OpenAI and LiteLLM say "Unsupported value: 'temperature' does not support
+/// 0.1 with this model" or "Unsupported parameter: 'temperature' is not
+/// supported with this model". A 4xx that names the field counts.
+pub fn is_temperature_unsupported(status: reqwest::StatusCode, detail: &str) -> bool {
+    status.is_client_error() && detail.to_lowercase().contains("temperature")
 }
 
 /// Did the server reject the request because this model has no tool support?
@@ -599,12 +635,28 @@ mod tests {
     }
 
     #[test]
+    fn a_temperature_rejection_is_recognised() {
+        use reqwest::StatusCode;
+        // LiteLLM in front of gpt-5.5, verbatim.
+        assert!(is_temperature_unsupported(
+            StatusCode::BAD_REQUEST,
+            "litellm.BadRequestError: OpenAIException - Unsupported value: 'temperature' does not support 0.1 with this model. Only the default (1) value is supported.. Received Model Group=gpt-5.5 Available Model Group Fallbacks=None"
+        ));
+        assert!(is_temperature_unsupported(
+            StatusCode::BAD_REQUEST,
+            "Unsupported parameter: 'temperature' is not supported with this model."
+        ));
+        assert!(!is_temperature_unsupported(StatusCode::BAD_REQUEST, "model 'nope' not found"));
+        assert!(!is_temperature_unsupported(StatusCode::INTERNAL_SERVER_ERROR, "temperature"));
+    }
+
+    #[test]
     fn reasoning_effort_rides_on_the_request_only_when_configured() {
         let messages = [ChatMessage::user("hi")];
         let with = ChatRequest {
             model: "m",
             messages: &messages,
-            temperature: 0.0,
+            temperature: Some(0.0),
             max_tokens: 1,
             tools: &[],
             tool_choice: None,
